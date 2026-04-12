@@ -11,6 +11,7 @@ import (
 	"github.com/tobiash/flux-manifest-preview/pkg/diff"
 	"github.com/tobiash/flux-manifest-preview/pkg/expander"
 	fluxksexpander "github.com/tobiash/flux-manifest-preview/pkg/expander/fluxks"
+	gitrepoexpander "github.com/tobiash/flux-manifest-preview/pkg/expander/gitrepo"
 	helmexpander "github.com/tobiash/flux-manifest-preview/pkg/expander/helm"
 	"github.com/tobiash/flux-manifest-preview/pkg/filter"
 	"github.com/tobiash/flux-manifest-preview/pkg/render"
@@ -22,14 +23,15 @@ import (
 
 // Preview renders and diffs Flux GitOps resources.
 type Preview struct {
-	paths       []string
-	recursive   bool
-	sortOutput  bool
-	excludeCRDs bool
-	filters     *filter.FilterConfig
-	expanders   *expander.Registry
-	log         logr.Logger
-	ctx         context.Context
+	paths           []string
+	recursive       bool
+	sortOutput      bool
+	excludeCRDs     bool
+	filters         *filter.FilterConfig
+	expanders       *expander.Registry
+	gitRepoExpander *gitrepoexpander.Expander
+	log             logr.Logger
+	ctx             context.Context
 }
 
 func (p *Preview) loadRepo(path string) (*render.Render, error) {
@@ -38,8 +40,10 @@ func (p *Preview) loadRepo(path string) (*render.Render, error) {
 	fSys := filesys.MakeFsOnDisk()
 
 	// Seed the queue with user-specified paths.
-	queue := make([]string, len(p.paths))
-	copy(queue, p.paths)
+	queue := make([]expander.DiscoveredPath, len(p.paths))
+	for i, p := range p.paths {
+		queue[i] = expander.DiscoveredPath{Path: p}
+	}
 
 	// userPaths tracks which paths were explicitly requested by the user.
 	// Missing user paths are errors; missing discovered paths are skipped.
@@ -57,24 +61,27 @@ func (p *Preview) loadRepo(path string) (*render.Render, error) {
 			return nil, fmt.Errorf("expansion loop exceeded %d iterations, possible cycle", maxIterations)
 		}
 
-
 		// Render all newly discovered paths.
-		for _, relPath := range queue {
-			full := filepath.Join(path, relPath)
+		for _, dp := range queue {
+			baseDir := dp.BaseDir
+			if baseDir == "" {
+				baseDir = path
+			}
+			full := filepath.Join(baseDir, dp.Path)
 			if visited[full] {
 				continue
 			}
 			visited[full] = true
 
 			if !fSys.Exists(full) {
-				if userPaths[relPath] {
-					return nil, fmt.Errorf("path %q does not exist", relPath)
+				if userPaths[dp.Path] {
+					return nil, fmt.Errorf("path %q does not exist", dp.Path)
 				}
-				log.Info("skipping non-existent path", "path", relPath)
+				log.Info("skipping non-existent path", "path", dp.Path)
 				continue
 			}
 
-			log.Info("rendering path", "path", relPath)
+			log.Info("rendering path", "path", dp.Path, "baseDir", dp.BaseDir)
 			if p.recursive {
 				if err := r.AddPaths(fSys, full); err != nil {
 					return nil, fmt.Errorf("failed to add path %s: %w", full, err)
@@ -99,14 +106,19 @@ func (p *Preview) loadRepo(path string) (*render.Render, error) {
 				}
 			}
 			// Only queue paths we haven't rendered yet.
-			for _, discoveredPath := range result.DiscoveredPaths {
-				full := filepath.Join(path, discoveredPath)
+			for _, dp := range result.DiscoveredPaths {
+				baseDir := dp.BaseDir
+				if baseDir == "" {
+					baseDir = path
+				}
+				full := filepath.Join(baseDir, dp.Path)
 				if !visited[full] {
-					queue = append(queue, discoveredPath)
+					queue = append(queue, dp)
 				}
 			}
 		}
 	}
+
 
 	if p.filters != nil {
 		for _, f := range p.filters.Filters {
@@ -236,10 +248,30 @@ func WithHelm(helmsettings *helmcli.EnvSettings) Opt {
 
 // WithFluxKS registers the Flux Kustomization expander which discovers
 // spec.path from Flux Kustomization CRs and feeds them back to the renderer.
+// If a GitRepository expander is registered, it is used to resolve source paths.
 func WithFluxKS() Opt {
 	return func(p *Preview) error {
 		p.ensureRegistry()
-		p.expanders.Register(fluxksexpander.NewExpander(p.log))
+		if p.gitRepoExpander != nil {
+			p.expanders.Register(fluxksexpander.NewExpanderWithResolver(p.log, p.gitRepoExpander))
+		} else {
+			p.expanders.Register(fluxksexpander.NewExpander(p.log))
+		}
+		return nil
+	}
+}
+
+// WithGitRepo registers the GitRepository expander which clones external
+// repos to temp directories. Must be called before WithFluxKS.
+func WithGitRepo() Opt {
+	return func(p *Preview) error {
+		p.ensureRegistry()
+		exp, err := gitrepoexpander.NewExpander(p.log)
+		if err != nil {
+			return fmt.Errorf("creating git repo expander: %w", err)
+		}
+		p.gitRepoExpander = exp
+		p.expanders.Register(exp)
 		return nil
 	}
 }

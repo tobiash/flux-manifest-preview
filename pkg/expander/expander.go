@@ -9,20 +9,26 @@ import (
 	"sigs.k8s.io/kustomize/api/resmap"
 )
 
+// DiscoveredPath represents a path to render, optionally relative to a
+// different base directory (e.g. a cloned GitRepository).
+type DiscoveredPath struct {
+	// Path relative to BaseDir (or the repo root if BaseDir is empty).
+	Path string
+	// BaseDir is the root directory for Path resolution.
+	// If empty, Path is resolved against the main repo root.
+	BaseDir string
+}
+
 // ExpandResult holds the output of an expander.
 type ExpandResult struct {
 	// Resources contains additional resources produced by the expander.
 	Resources resmap.ResMap
-	// DiscoveredPaths contains new paths that should be rendered in the
-	// next iteration of the expansion loop (e.g. Flux Kustomization spec.path).
-	DiscoveredPaths []string
+	// DiscoveredPaths contains new paths that should be rendered.
+	DiscoveredPaths []DiscoveredPath
 }
 
 // Expander is the interface that each resource expander must implement.
-// An expander takes a rendered set of Kubernetes resources and produces
-// additional resources and/or discovers new paths to render.
 type Expander interface {
-	// Expand processes the given render and returns expansion results.
 	Expand(ctx context.Context, r *render.Render) (*ExpandResult, error)
 }
 
@@ -44,7 +50,7 @@ func (r *Registry) Register(e Expander) {
 	r.expanders = append(r.expanders, e)
 }
 
-// Expand runs all registered expanders on the given render and accumulates results.
+// Expand runs all registered expanders and accumulates results.
 func (r *Registry) Expand(ctx context.Context, render *render.Render) (*ExpandResult, error) {
 	result := &ExpandResult{Resources: resmap.New()}
 	for i, e := range r.expanders {

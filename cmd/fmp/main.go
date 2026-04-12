@@ -23,6 +23,7 @@ var (
 	sortOutput     bool
 	excludeCRDs    bool
 	quiet          bool
+	resolveGit     bool
 
 	helmRegistryConfig   string
 	helmRepositoryConfig string
@@ -54,6 +55,7 @@ func main() {
 	rootCmd.PersistentFlags().BoolVarP(&sortOutput, "sort", "s", false, "Sort output by (kind, namespace, name) for deterministic diffs")
 	rootCmd.PersistentFlags().BoolVar(&excludeCRDs, "exclude-crds", false, "Strip CustomResourceDefinitions from output")
 	rootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "Suppress informational output (only show errors)")
+	rootCmd.PersistentFlags().BoolVar(&resolveGit, "resolve-git", false, "Clone external GitRepository sources to temp dirs")
 	rootCmd.PersistentFlags().StringVar(&helmRegistryConfig, "registry-config", "", "Helm Registry Config")
 	rootCmd.PersistentFlags().StringVar(&helmRepositoryConfig, "repository-config", "", "Helm Repository Config")
 	rootCmd.PersistentFlags().StringVar(&helmRepositoryCache, "repository-cache", "", "Helm Repository Cache")
@@ -216,8 +218,13 @@ func buildOpts(log logr.Logger) ([]preview.Opt, error) {
 	opts := []preview.Opt{
 		preview.WithLogger(log),
 		preview.WithPaths(kustomizations, recursive),
-		preview.WithFluxKS(),
 	}
+
+	if resolveGit {
+		opts = append(opts, preview.WithGitRepo())
+	}
+
+	opts = append(opts, preview.WithFluxKS())
 
 	if renderHelm {
 		opts = append(opts, preview.WithHelm(helmSettings()))
