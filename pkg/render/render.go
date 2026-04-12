@@ -1,6 +1,7 @@
 package render
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -172,4 +173,27 @@ func (r *Render) ApplyNamespaceToNew(count int, namespace string) {
 			res.SetNamespace(namespace)
 		}
 	}
+}
+
+// AsJSON returns the rendered resources as a JSON array.
+func (r *Render) AsJSON() ([]byte, error) {
+	resources := r.Resources()
+	buf := make([]byte, 0, len(resources)*256)
+	buf = append(buf, '[')
+	for i, res := range resources {
+		if i > 0 {
+			buf = append(buf, ',')
+		}
+		m, err := res.Map()
+		if err != nil {
+			continue
+		}
+		data, err := json.Marshal(m)
+		if err != nil {
+			continue
+		}
+		buf = append(buf, data...)
+	}
+	buf = append(buf, ']')
+	return buf, nil
 }

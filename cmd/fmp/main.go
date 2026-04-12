@@ -24,6 +24,7 @@ var (
 	excludeCRDs    bool
 	quiet          bool
 	resolveGit     bool
+	outputFormat   string
 
 	helmRegistryConfig   string
 	helmRepositoryConfig string
@@ -73,9 +74,14 @@ func main() {
 			if err != nil {
 				return fmt.Errorf("error creating preview: %w", err)
 			}
+			if outputFormat == "json" {
+				return p.RenderJSON(args[0], os.Stdout)
+			}
 			return p.Render(args[0], os.Stdout)
 		},
 	}
+
+	renderCmd.Flags().StringVarP(&outputFormat, "output", "o", "yaml", "Output format (yaml or json)")
 	diffCmd := &cobra.Command{
 		Use:   "diff <path-a> <path-b>",
 		Short: "Diff two paths",

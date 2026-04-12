@@ -153,6 +153,25 @@ func (p *Preview) Render(path string, out io.Writer) error {
 	return nil
 }
 
+// RenderJSON renders the resources at path and writes JSON output.
+func (p *Preview) RenderJSON(path string, out io.Writer) error {
+	r, err := p.loadRepo(path)
+	if err != nil {
+		return fmt.Errorf("error loading repo: %w", err)
+	}
+	p.applyOutputOptions(r)
+	json, err := r.AsJSON()
+	if err != nil {
+		return fmt.Errorf("error transforming to json: %w", err)
+	}
+	_, err = out.Write(json)
+	if err != nil {
+		return fmt.Errorf("error writing output: %w", err)
+	}
+	return nil
+}
+
+
 // Test validates that all Kustomizations build and HelmReleases render.
 // Returns nil on success, or an error describing the failure.
 func (p *Preview) Test(path string, out io.Writer) error {
