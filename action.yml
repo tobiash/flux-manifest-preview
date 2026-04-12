@@ -59,7 +59,14 @@ runs:
     - name: Flux Manifest Preview
       id: fmp
       shell: bash
-      run: fmp ci
+      run: |
+        DIFF=$(fmp ci)
+        echo "$DIFF"
+        {
+          echo "diff<<EOF"
+          echo "$DIFF"
+          echo "EOF"
+        } >> "$GITHUB_OUTPUT"
       env:
         FMP_REPO_A: ${{ inputs.repo-a }}
         FMP_REPO_B: ${{ inputs.repo-b }}

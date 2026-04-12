@@ -1,0 +1,103 @@
+name: Action Integration Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-source-build:
+    name: Test action (build from source)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Simulate a PR diff by comparing the repo against itself.
+      # The "base" is the test fixture, the "target" is the same
+      # fixture with a modified value — produces a real diff.
+      - name: Prepare test repos
+        run: |
+          cp -r tests/action /tmp/repo-a
+          cp -r tests/action /tmp/repo-b
+          # Modify a value in repo-b so the diff is non-empty
+          sed -i 's/color: blue/color: green/' /tmp/repo-b/apps/podinfo/configmap.yaml
+
+      - name: Run flux-manifest-preview
+        id: fmp
+        uses: ./
+        with:
+          repo-a: /tmp/repo-a
+          repo-b: /tmp/repo-b
+          kustomizations: |
+            clusters/kube
+          helm: 'false'
+
+      - name: Verify diff output is non-empty
+        run: |
+          if [ -z "${{ steps.fmp.outputs.diff }}" ]; then
+            echo "ERROR: diff output is empty"
+            exit 1
+          fi
+          echo "Diff produced successfully"
+
+      - name: Verify diff content
+        run: |
+          echo "${{ steps.fmp.outputs.diff }}" | grep -q "blue" || { echo "Missing 'blue' in diff"; exit 1; }
+          echo "${{ steps.fmp.outputs.diff }}" | grep -q "green" || { echo "Missing 'green' in diff"; exit 1; }
+          echo "Diff contains expected changes"
+
+  test-fmp-test-command:
+    name: Test 'fmp test' command
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install fmp (build from source)
+        run: |
+          go build -o /usr/local/bin/fmp ./cmd/fmp
+
+      - name: Run fmp test (should pass)
+        run: |
+          fmp test tests/action -k clusters/kube --render-helm=false -q
+
+      - name: Run fmp test (should fail on broken path)
+        run: |
+          if fmp test tests/action -k nonexistent --render-helm=false -q 2>/dev/null; then
+            echo "ERROR: fmp test should have failed for nonexistent path"
+            exit 1
+          fi
+          echo "Correctly failed for nonexistent path"
+
+  test-fmp-render-sorted:
+    name: Test 'fmp render --sort'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install fmp (build from source)
+        run: |
+          go build -o /usr/local/bin/fmp ./cmd/fmp
+
+      - name: Render and verify sorted output
+        run: |
+          OUTPUT=$(fmp render tests/action -k apps/podinfo --render-helm=false -q -s)
+          echo "$OUTPUT" | head -1 | grep -q "^apiVersion" || { echo "Missing apiVersion"; exit 1; }
+          echo "$OUTPUT" | grep -q "kind: ConfigMap" || { echo "Missing ConfigMap kind"; exit 1; }
+          echo "$OUTPUT" | grep -q "name: podinfo-config" || { echo "Missing resource name"; exit 1; }
+
+          # Verify deterministic order: run twice, expect identical output
+          OUTPUT2=$(fmp render tests/action -k apps/podinfo --render-helm=false -q -s)
+          if [ "$OUTPUT" != "$OUTPUT2" ]; then
+            echo "ERROR: sorted output is not deterministic"
+            exit 1
+          fi
+          echo "Sorted output is deterministic"

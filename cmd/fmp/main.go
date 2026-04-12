@@ -116,22 +116,19 @@ func main() {
 				return fmt.Errorf("must set both FMP_REPO_A and FMP_REPO_B")
 			}
 
+			// Override flags from env vars before building options.
+			if ks := os.Getenv("FMP_KUSTOMIZATIONS"); ks != "" {
+				kustomizations = parseLines(ks)
+			}
+			if v := os.Getenv("FMP_RENDER_HELM"); v != "" {
+				renderHelm = v == "true" || v == "1"
+			}
+
 			opts, err := buildOpts(log)
 			if err != nil {
 				return err
 			}
 
-			// Override kustomizations from env if set
-			if ks := os.Getenv("FMP_KUSTOMIZATIONS"); ks != "" {
-				kustomizations = parseLines(ks)
-			}
-
-			// Override helm from env if set
-			if v := os.Getenv("FMP_RENDER_HELM"); v != "" {
-				renderHelm = v == "true" || v == "1"
-			}
-
-			// Override filter from env if set
 			if v := os.Getenv("FMP_FILTER"); v != "" {
 				opts = append(opts, preview.WithFilterYAML(v))
 			}
