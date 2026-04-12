@@ -41,6 +41,13 @@ func (p *Preview) loadRepo(path string) (*render.Render, error) {
 	queue := make([]string, len(p.paths))
 	copy(queue, p.paths)
 
+	// userPaths tracks which paths were explicitly requested by the user.
+	// Missing user paths are errors; missing discovered paths are skipped.
+	userPaths := make(map[string]bool, len(p.paths))
+	for _, p := range p.paths {
+		userPaths[p] = true
+	}
+
 	// visited tracks paths already rendered to prevent cycles.
 	visited := make(map[string]bool)
 
@@ -50,6 +57,7 @@ func (p *Preview) loadRepo(path string) (*render.Render, error) {
 			return nil, fmt.Errorf("expansion loop exceeded %d iterations, possible cycle", maxIterations)
 		}
 
+
 		// Render all newly discovered paths.
 		for _, relPath := range queue {
 			full := filepath.Join(path, relPath)
@@ -58,8 +66,10 @@ func (p *Preview) loadRepo(path string) (*render.Render, error) {
 			}
 			visited[full] = true
 
-			// Skip paths that don't exist on disk (e.g. external GitRepository refs).
 			if !fSys.Exists(full) {
+				if userPaths[relPath] {
+					return nil, fmt.Errorf("path %q does not exist", relPath)
+				}
 				log.Info("skipping non-existent path", "path", relPath)
 				continue
 			}
@@ -75,9 +85,9 @@ func (p *Preview) loadRepo(path string) (*render.Render, error) {
 				}
 			}
 		}
-		queue = nil
 
 		// Run expanders to discover new paths and expand resources.
+		queue = nil
 		if p.expanders != nil {
 			result, err := p.expanders.Expand(p.ctx, r)
 			if err != nil {
