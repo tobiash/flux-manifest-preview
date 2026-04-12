@@ -25,24 +25,35 @@ outputs:
     value: ${{ steps.fmp.outputs.diff }}
 runs:
   using: 'composite'
-
   steps:
-    - name: Download fmp
+    - name: Install fmp
       shell: bash
       run: |
-        ARCH=$(uname -m)
-        case "$ARCH" in
-          x86_64) ARCH="x86_64" ;;
-          aarch64) ARCH="arm64" ;;
-          *) echo "Unsupported architecture: $ARCH" && exit 1 ;;
-        esac
-        VERSION="${{ github.action_ref }}"
-        URL="https://github.com/tobiash/flux-manifest-preview/releases/download/${VERSION}/fmp_${VERSION}_linux_${ARCH}.tar.gz"
+        set -euo pipefail
         mkdir -p "$RUNNER_TOOL_CACHE/fmp"
-        if [ ! -f "$RUNNER_TOOL_CACHE/fmp/fmp" ]; then
+
+        REF="${{ github.action_ref }}"
+
+        if [[ "$REF" == v* ]]; then
+          echo "::group::Download fmp $REF"
+          ARCH=$(uname -m)
+          case "$ARCH" in
+            x86_64) ARCH="amd64" ;;
+            aarch64) ARCH="arm64" ;;
+            *) echo "Unsupported architecture: $ARCH" && exit 1 ;;
+          esac
+          URL="https://github.com/tobiash/flux-manifest-preview/releases/download/${REF}/fmp_${REF}_linux_${ARCH}.tar.gz"
           curl -fsSL "$URL" | tar -xz -C "$RUNNER_TOOL_CACHE/fmp" fmp
           chmod +x "$RUNNER_TOOL_CACHE/fmp/fmp"
+          echo "::endgroup::"
+        else
+          echo "::group::Build fmp from source ($REF)"
+          cd "${{ github.action_path }}"
+          go build -o "$RUNNER_TOOL_CACHE/fmp/fmp" ./cmd/fmp
+          chmod +x "$RUNNER_TOOL_CACHE/fmp/fmp"
+          echo "::endgroup::"
         fi
+
         echo "$RUNNER_TOOL_CACHE/fmp" >> "$GITHUB_PATH"
 
     - name: Flux Manifest Preview
