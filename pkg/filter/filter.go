@@ -19,21 +19,25 @@ var Filters = map[string]func() kio.Filter{
 	"LabelRemover":  func() kio.Filter { return &LabelRemover{} },
 }
 
+// KFilter wraps a kio.Filter for YAML marshaling and unmarshaling.
+
 type KFilter struct {
 	kio.Filter
 }
+
+// FilterConfig defines a pipeline of KIO filters to apply.
 
 type FilterConfig struct {
 	Kind    string    `yaml:"kind,omitempty"`
 	Filters []KFilter `yaml:"filters,omitempty"`
 }
 
-func (f KFilter) MarshalYAML() (interface{}, error) {
+func (f KFilter) MarshalYAML() (any, error) {
 	return f.Filter, nil
 }
 
-func (f *KFilter) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	i := map[string]interface{}{}
+func (f *KFilter) UnmarshalYAML(unmarshal func(any) error) error {
+	i := map[string]any{}
 	if err := unmarshal(i); err != nil {
 		return err
 	}
@@ -48,7 +52,7 @@ func (f *KFilter) UnmarshalYAML(unmarshal func(interface{}) error) error {
 			knownFilters = append(knownFilters, k)
 		}
 		sort.Strings(knownFilters)
-		return fmt.Errorf("unsupported filter Kind %v:  may be one of: [%s]",
+		return fmt.Errorf("unsupported filter Kind %v: may be one of: [%s]",
 			meta, strings.Join(knownFilters, ","))
 	}
 	f.Filter = filter()

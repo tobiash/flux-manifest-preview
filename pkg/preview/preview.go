@@ -8,45 +8,93 @@ import (
 	"path/filepath"
 
 	"github.com/go-logr/logr"
-	"github.com/tobiash/flux-helm-preview/pkg/diff"
-	"github.com/tobiash/flux-helm-preview/pkg/filter"
-	"github.com/tobiash/flux-helm-preview/pkg/helmrender"
-	"github.com/tobiash/flux-helm-preview/pkg/render"
+	"github.com/tobiash/flux-manifest-preview/pkg/diff"
+	"github.com/tobiash/flux-manifest-preview/pkg/expander"
+	fluxksexpander "github.com/tobiash/flux-manifest-preview/pkg/expander/fluxks"
+	helmexpander "github.com/tobiash/flux-manifest-preview/pkg/expander/helm"
+	"github.com/tobiash/flux-manifest-preview/pkg/filter"
+	"github.com/tobiash/flux-manifest-preview/pkg/render"
 	"golang.org/x/sync/errgroup"
 	"gopkg.in/yaml.v3"
-	helmcli "helm.sh/helm/v3/pkg/cli"
+	helmcli "helm.sh/helm/v4/pkg/cli"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 )
 
+// Preview renders and diffs Flux GitOps resources.
 type Preview struct {
-	kustomizations []string
-	filters        *filter.FilterConfig
-	helmsettings   *helmcli.EnvSettings
-	helmrunner     *helmrender.Runner
-	log            logr.Logger
-	ctx            context.Context
+	paths       []string
+	recursive   bool
+	sortOutput  bool
+	excludeCRDs bool
+	filters     *filter.FilterConfig
+	expanders   *expander.Registry
+	log         logr.Logger
+	ctx         context.Context
 }
 
 func (p *Preview) loadRepo(path string) (*render.Render, error) {
-	r := render.NewDefaultRender(p.log.WithValues("renderPath", path))
-	for _, k := range p.kustomizations {
-		err := r.AddKustomization(filesys.MakeFsOnDisk(), filepath.Join(path, k))
-		if err != nil {
-			return nil, fmt.Errorf("failed to add kustomization: %w", err)
-		}
-	}
+	log := p.log.WithValues("renderPath", path)
+	r := render.NewDefaultRender(log)
+	fSys := filesys.MakeFsOnDisk()
 
-	if p.helmrunner != nil {
-		helm, err := helmrender.ParseHelmRepo(r, p.helmrunner, p.log)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse helm repo: %w", err)
+	// Seed the queue with user-specified paths.
+	queue := make([]string, len(p.paths))
+	copy(queue, p.paths)
+
+	// visited tracks paths already rendered to prevent cycles.
+	visited := make(map[string]bool)
+
+	const maxIterations = 100
+	for iteration := 0; len(queue) > 0; iteration++ {
+		if iteration > maxIterations {
+			return nil, fmt.Errorf("expansion loop exceeded %d iterations, possible cycle", maxIterations)
 		}
-		rc, err := helm.RenderAllCharts()
-		if err != nil {
-			return nil, fmt.Errorf("failed to render helm charts: %w", err)
+
+		// Render all newly discovered paths.
+		for _, relPath := range queue {
+			full := filepath.Join(path, relPath)
+			if visited[full] {
+				continue
+			}
+			visited[full] = true
+
+			// Skip paths that don't exist on disk (e.g. external GitRepository refs).
+			if !fSys.Exists(full) {
+				log.Info("skipping non-existent path", "path", relPath)
+				continue
+			}
+
+			log.Info("rendering path", "path", relPath)
+			if p.recursive {
+				if err := r.AddPaths(fSys, full); err != nil {
+					return nil, fmt.Errorf("failed to add path %s: %w", full, err)
+				}
+			} else {
+				if err := r.AddPath(fSys, full); err != nil {
+					return nil, fmt.Errorf("failed to add path %s: %w", full, err)
+				}
+			}
 		}
-		if err = r.AppendAll(rc); err != nil {
-			return nil, err
+		queue = nil
+
+		// Run expanders to discover new paths and expand resources.
+		if p.expanders != nil {
+			result, err := p.expanders.Expand(p.ctx, r)
+			if err != nil {
+				return nil, fmt.Errorf("failed to expand: %w", err)
+			}
+			if result.Resources != nil {
+				if err := r.AppendAll(result.Resources); err != nil {
+					return nil, fmt.Errorf("failed to absorb expanded resources: %w", err)
+				}
+			}
+			// Only queue paths we haven't rendered yet.
+			for _, discoveredPath := range result.DiscoveredPaths {
+				full := filepath.Join(path, discoveredPath)
+				if !visited[full] {
+					queue = append(queue, discoveredPath)
+				}
+			}
 		}
 	}
 
@@ -61,34 +109,45 @@ func (p *Preview) loadRepo(path string) (*render.Render, error) {
 	return r, nil
 }
 
+// Render renders the resources at path and writes the YAML output.
 func (p *Preview) Render(path string, out io.Writer) error {
 	r, err := p.loadRepo(path)
 	if err != nil {
 		return fmt.Errorf("error loading repo: %w", err)
 	}
+	p.applyOutputOptions(r)
 	yaml, err := r.AsYaml()
 	if err != nil {
 		return fmt.Errorf("error transforming to yaml: %w", err)
 	}
 	_, err = out.Write(yaml)
 	if err != nil {
-		fmt.Errorf("error writing output: %w", err)
+		return fmt.Errorf("error writing output: %w", err)
 	}
 	return nil
 }
 
-func (a *Preview) renderFn(repo string, out **render.Render) func () error {
+// Test validates that all Kustomizations build and HelmReleases render.
+// Returns nil on success, or an error describing the failure.
+func (p *Preview) Test(path string, out io.Writer) error {
+	_, err := p.loadRepo(path)
+	if err != nil {
+		fmt.Fprintf(out, "FAIL: %v\n", err)
+		return err
+	}
+	fmt.Fprintln(out, "PASS")
+	return nil
+}
+
+func (p *Preview) renderFn(repo string, out **render.Render) func() error {
 	return func() error {
 		var err error
-		*out, err = a.loadRepo(repo)
-		if err != nil {
-			return err
-		}
-		return nil
+		*out, err = p.loadRepo(repo)
+		return err
 	}
 }
 
-
+// Diff computes and writes the diff between two repository paths.
 func (p *Preview) Diff(a, b string, out io.Writer) error {
 	g, _ := errgroup.WithContext(p.ctx)
 	var ar, br *render.Render
@@ -97,14 +156,18 @@ func (p *Preview) Diff(a, b string, out io.Writer) error {
 	if err := g.Wait(); err != nil {
 		return fmt.Errorf("render error: %w", err)
 	}
+	p.applyOutputOptions(ar)
+	p.applyOutputOptions(br)
 	if err := diff.Diff(ar, br, out); err != nil {
 		return fmt.Errorf("diff error: %w", err)
 	}
 	return nil
 }
 
+// Opt is a functional option for configuring Preview.
 type Opt func(p *Preview) error
 
+// New creates a new Preview with the given options.
 func New(opts ...Opt) (*Preview, error) {
 	var p Preview
 	for _, opt := range opts {
@@ -112,15 +175,13 @@ func New(opts ...Opt) (*Preview, error) {
 			return nil, err
 		}
 	}
-	if p.helmsettings != nil {
-		p.helmrunner = helmrender.NewRunner(p.helmsettings, p.log)
-	}
 	if p.ctx == nil {
-		p.ctx = context.TODO()
+		p.ctx = context.Background()
 	}
 	return &p, nil
 }
 
+// WithLogger sets the logger for the Preview.
 func WithLogger(log logr.Logger) Opt {
 	return func(p *Preview) error {
 		p.log = log
@@ -128,6 +189,7 @@ func WithLogger(log logr.Logger) Opt {
 	}
 }
 
+// WithFilterFile configures filters from a YAML file.
 func WithFilterFile(f *os.File) Opt {
 	return func(p *Preview) error {
 		m := &filter.FilterConfig{}
@@ -140,8 +202,9 @@ func WithFilterFile(f *os.File) Opt {
 	}
 }
 
+// WithFilterYAML configures filters from a raw YAML string.
 func WithFilterYAML(f string) Opt {
-	return func (p *Preview) error {
+	return func(p *Preview) error {
 		m := &filter.FilterConfig{}
 		if err := yaml.Unmarshal([]byte(f), m); err != nil {
 			return err
@@ -151,16 +214,72 @@ func WithFilterYAML(f string) Opt {
 	}
 }
 
+// WithHelm registers the Helm expander with the given settings.
 func WithHelm(helmsettings *helmcli.EnvSettings) Opt {
 	return func(p *Preview) error {
-		p.helmsettings = helmsettings
+		p.ensureRegistry()
+		runner := helmexpander.NewRunner(helmsettings, p.log)
+		p.expanders.Register(helmexpander.NewExpander(runner, p.log))
 		return nil
 	}
 }
 
-func WithKustomizations(kustomizations []string) Opt {
+// WithFluxKS registers the Flux Kustomization expander which discovers
+// spec.path from Flux Kustomization CRs and feeds them back to the renderer.
+func WithFluxKS() Opt {
 	return func(p *Preview) error {
-		p.kustomizations = append(p.kustomizations, kustomizations...)
+		p.ensureRegistry()
+		p.expanders.Register(fluxksexpander.NewExpander(p.log))
+		return nil
+	}
+}
+
+// ensureRegistry lazily initializes the expander registry.
+func (p *Preview) ensureRegistry() {
+	if p.expanders == nil {
+		p.expanders = expander.NewRegistry(p.log)
+	}
+}
+
+// WithPaths configures the paths to render and whether to recurse into subdirectories.
+func WithPaths(paths []string, recursive bool) Opt {
+	return func(p *Preview) error {
+		p.paths = append(p.paths, paths...)
+		p.recursive = recursive
+		return nil
+	}
+}
+
+// WithContext sets the context for the Preview.
+func WithContext(ctx context.Context) Opt {
+	return func(p *Preview) error {
+		p.ctx = ctx
+		return nil
+	}
+}
+
+// applyOutputOptions applies sort and CRD filtering to the render result.
+func (p *Preview) applyOutputOptions(r *render.Render) {
+	if p.sortOutput {
+		r.Sort()
+	}
+	if p.excludeCRDs {
+		r.FilterCRDs()
+	}
+}
+
+// WithSort enables deterministic output sorting by (kind, namespace, name).
+func WithSort() Opt {
+	return func(p *Preview) error {
+		p.sortOutput = true
+		return nil
+	}
+}
+
+// WithExcludeCRDs strips CustomResourceDefinitions from rendered output.
+func WithExcludeCRDs() Opt {
+	return func(p *Preview) error {
+		p.excludeCRDs = true
 		return nil
 	}
 }

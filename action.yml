@@ -1,68 +1,57 @@
-name: Flux Helm Preview
-description: Render and diff Flux GitOps kustomizations and helm releases to preview PR changes
-author: Tobias Habermann
+name: 'Flux Manifest Preview'
+description: 'Render and diff Flux GitOps manifests'
 inputs:
-  helm:
-    description: 'Render HelmRelease resources'
-    required: false
-    default: "false"
-  kustomizations:
-    description: 'List of kustomizations to render (newline separated)'
-    required: true
   repo-a:
-    description: 'Path to repository A'
+    description: Path to the base repository checkout
     required: true
   repo-b:
-    description: 'Path to repository B'
+    description: Path to the target repository checkout
     required: true
-  write-markdown:
-    description: 'Write markdown diff comment to a file'
+  helm:
+    description: Enable Helm rendering
     required: false
-    default: ""
-  markdown-template:
-    description: 'Template for markdown output'
+    default: 'true'
+  kustomizations:
+    description: Kustomize bases to render (newline-separated, relative to repo path)
     required: false
-    default: |-
-      # Flux Helm Preview
-      ```diff
-      {{ .Diff }}
-      ```
+    default: ''
   filter:
     description: KIO filters to apply to rendered YAML
     required: false
-    default: ""
+    default: ''
 outputs:
   diff:
-    description: Diff in Markdown format
-    value: ${{ steps.fhp.outputs.diff }}
+    description: Diff in unified format
+    value: ${{ steps.fmp.outputs.diff }}
 runs:
   using: 'composite'
 
   steps:
-    - uses: actions/setup-go@v3
-      with:
-        go-version: '>=1.18.0'
-    - name: Download Go modules
-      run: go mod download
-      working-directory: ${{ github.action_path }}
+    - name: Download fmp
       shell: bash
-    - run:  go build -ldflags "-s -w -extldflags '-static'" -o build/fhp ./cmd/action
-      working-directory: ${{ github.action_path }}
+      run: |
+        ARCH=$(uname -m)
+        case "$ARCH" in
+          x86_64) ARCH="x86_64" ;;
+          aarch64) ARCH="arm64" ;;
+          *) echo "Unsupported architecture: $ARCH" && exit 1 ;;
+        esac
+        VERSION="${{ github.action_ref }}"
+        URL="https://github.com/tobiash/flux-manifest-preview/releases/download/${VERSION}/fmp_${VERSION}_linux_${ARCH}.tar.gz"
+        mkdir -p "$RUNNER_TOOL_CACHE/fmp"
+        if [ ! -f "$RUNNER_TOOL_CACHE/fmp/fmp" ]; then
+          curl -fsSL "$URL" | tar -xz -C "$RUNNER_TOOL_CACHE/fmp" fmp
+          chmod +x "$RUNNER_TOOL_CACHE/fmp/fmp"
+        fi
+        echo "$RUNNER_TOOL_CACHE/fmp" >> "$GITHUB_PATH"
+
+    - name: Flux Manifest Preview
+      id: fmp
       shell: bash
+      run: fmp ci
       env:
-        GO111MODULE: on
-        CGO_ENABLED: "0"
-        GOOS: linux
-        GOARCH: amd64
-    - name: Flux Helm Preview
-      id: fhp
-      run: ${{ github.action_path }}/build/fhp
-      shell: bash
-      env:
-        INPUT_HELM: ${{ inputs.helm }}
-        INPUT_KUSTOMIZATIONS: ${{ inputs.kustomizations }}
-        INPUT_REPO-A: ${{ inputs.repo-a }}
-        INPUT_REPO-B: ${{ inputs.repo-b }}
-        INPUT_WRITE-MARKDOWN: ${{ inputs.write-markdown }}
-        INPUT_MARKDOWN-TEMPLATE: ${{ inputs.markdown-template }}
-        INPUT_FILTER: ${{ inputs.filter }}
+        FMP_REPO_A: ${{ inputs.repo-a }}
+        FMP_REPO_B: ${{ inputs.repo-b }}
+        FMP_RENDER_HELM: ${{ inputs.helm }}
+        FMP_KUSTOMIZATIONS: ${{ inputs.kustomizations }}
+        FMP_FILTER: ${{ inputs.filter }}

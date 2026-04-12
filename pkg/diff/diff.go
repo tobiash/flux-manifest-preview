@@ -7,11 +7,13 @@ import (
 	"github.com/hexops/gotextdiff"
 	"github.com/hexops/gotextdiff/myers"
 	"github.com/hexops/gotextdiff/span"
-	"github.com/tobiash/flux-helm-preview/pkg/render"
+	"github.com/tobiash/flux-manifest-preview/pkg/render"
 	"sigs.k8s.io/kustomize/kyaml/resid"
 )
 
-func Diff(a, b *render.Render, w io.Writer) (error) {
+// Diff computes a unified diff between two Renders and writes the result to w.
+
+func Diff(a, b *render.Render, w io.Writer) error {
 	var added, deleted, modified []resid.ResId
 	for _, ra := range a.Resources() {
 		if _, err := b.GetByCurrentId(ra.CurId()); err != nil {
@@ -44,9 +46,14 @@ func Diff(a, b *render.Render, w io.Writer) (error) {
 		ar, _ := a.GetByCurrentId(m)
 		br, _ := b.GetByCurrentId(m)
 
-		edits := myers.ComputeEdits(span.URIFromPath(m.String()), ar.MustYaml(), br.MustYaml())
-		fmt.Fprint(w, gotextdiff.ToUnified(m.String(), m.String(), ar.MustYaml(), edits))
+		aYaml := ar.MustYaml()
+		bYaml := br.MustYaml()
+		if aYaml == bYaml {
+			continue
+		}
+
+		edits := myers.ComputeEdits(span.URIFromPath(m.String()), aYaml, bYaml)
+		fmt.Fprint(w, gotextdiff.ToUnified(m.String(), m.String(), aYaml, edits))
 	}
 	return nil
-
 }

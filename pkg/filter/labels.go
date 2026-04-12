@@ -7,6 +7,10 @@ import (
 
 var _ kio.Filter = &LabelRemover{}
 
+// LabelRemover removes specified labels from resources at given field paths.
+// If no paths are specified, it defaults to metadata/labels and
+// spec/template/metadata/labels.
+
 type LabelRemover struct {
 	Kind   string     `yaml:"kind,omitempty"`
 	Labels []string   `yaml:"labels"`
