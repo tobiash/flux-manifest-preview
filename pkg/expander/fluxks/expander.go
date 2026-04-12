@@ -68,6 +68,12 @@ func (e *Expander) Expand(_ context.Context, r *render.Render) (*expander.Expand
 
 		dp := expander.DiscoveredPath{Path: path}
 
+		// Extract targetNamespace from spec.
+		if tn := extractTargetNamespace(res); tn != "" {
+			dp.Namespace = tn
+		}
+
+
 		// Resolve sourceRef if a resolver is available.
 		if e.resolver != nil {
 			srcRef := extractSourceRef(res)
@@ -133,4 +139,18 @@ func extractPath(res *resource.Resource) (string, error) {
 		return "", fmt.Errorf("Kustomization %s/%s has no spec.path", res.GetNamespace(), res.GetName())
 	}
 	return path, nil
+}
+
+// extractTargetNamespace reads spec.targetNamespace from a Flux Kustomization.
+func extractTargetNamespace(res *resource.Resource) string {
+	m, err := res.Map()
+	if err != nil {
+		return ""
+	}
+	spec, ok := m["spec"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	tn, _, _ := unstructured.NestedString(spec, "targetNamespace")
+	return tn
 }

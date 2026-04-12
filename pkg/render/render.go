@@ -162,3 +162,14 @@ func (r *Render) FilterCRDs() {
 		}
 	}
 }
+
+// ApplyNamespaceToNew sets the namespace on all namespace-scoped resources
+// added after the given count. This is used to apply Flux Kustomization
+// spec.targetNamespace to newly rendered resources.
+func (r *Render) ApplyNamespaceToNew(count int, namespace string) {
+	for _, res := range r.Resources()[count:] {
+		if !res.GetGvk().IsClusterScoped() && res.GetNamespace() == "" {
+			res.SetNamespace(namespace)
+		}
+	}
+}

@@ -17,6 +17,9 @@ type DiscoveredPath struct {
 	// BaseDir is the root directory for Path resolution.
 	// If empty, Path is resolved against the main repo root.
 	BaseDir string
+	// Namespace overrides the namespace for all namespace-scoped resources
+	// rendered from this path (e.g. Flux Kustomization spec.targetNamespace).
+	Namespace string
 }
 
 // ExpandResult holds the output of an expander.

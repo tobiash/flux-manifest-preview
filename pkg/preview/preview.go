@@ -82,6 +82,7 @@ func (p *Preview) loadRepo(path string) (*render.Render, error) {
 			}
 
 			log.Info("rendering path", "path", dp.Path, "baseDir", dp.BaseDir)
+			count := r.Size()
 			if p.recursive {
 				if err := r.AddPaths(fSys, full); err != nil {
 					return nil, fmt.Errorf("failed to add path %s: %w", full, err)
@@ -90,6 +91,9 @@ func (p *Preview) loadRepo(path string) (*render.Render, error) {
 				if err := r.AddPath(fSys, full); err != nil {
 					return nil, fmt.Errorf("failed to add path %s: %w", full, err)
 				}
+			}
+			if dp.Namespace != "" {
+				r.ApplyNamespaceToNew(count, dp.Namespace)
 			}
 		}
 
