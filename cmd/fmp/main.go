@@ -106,6 +106,55 @@ func main() {
 			return p.Test(args[0], os.Stderr)
 		},
 	}
+
+	getCmd := &cobra.Command{
+		Use:   "get",
+		Short: "List discovered Flux resources",
+	}
+	getKSCmd := &cobra.Command{
+		Use:   "ks <path>",
+		Short: "List Flux Kustomizations",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			opts, err := buildOpts(log)
+			if err != nil {
+				return err
+			}
+			p, err := preview.New(opts...)
+			if err != nil {
+				return fmt.Errorf("error creating preview: %w", err)
+			}
+			ks, err := p.ListKustomizations(args[0])
+			if err != nil {
+				return err
+			}
+			preview.PrintKustomizations(ks, os.Stdout)
+			return nil
+		},
+	}
+	getHRCmd := &cobra.Command{
+		Use:   "hr <path>",
+		Short: "List HelmReleases",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			opts, err := buildOpts(log)
+			if err != nil {
+				return err
+			}
+			p, err := preview.New(opts...)
+			if err != nil {
+				return fmt.Errorf("error creating preview: %w", err)
+			}
+			hrs, err := p.ListHelmReleases(args[0])
+			if err != nil {
+				return err
+			}
+			preview.PrintHelmReleases(hrs, os.Stdout)
+			return nil
+		},
+	}
+	getCmd.AddCommand(getKSCmd, getHRCmd)
+
 	ciCmd := &cobra.Command{
 		Use:   "ci",
 		Short: "Run CI diff using environment variables",
@@ -148,7 +197,7 @@ func main() {
 		},
 	}
 
-	rootCmd.AddCommand(renderCmd, diffCmd, testCmd, ciCmd, versionCmd)
+	rootCmd.AddCommand(renderCmd, diffCmd, testCmd, getCmd, ciCmd, versionCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
