@@ -23,15 +23,16 @@ import (
 
 // Preview renders and diffs Flux GitOps resources.
 type Preview struct {
-	paths           []string
-	recursive       bool
-	sortOutput      bool
-	excludeCRDs     bool
-	filters         *filter.FilterConfig
-	expanders       *expander.Registry
-	gitRepoExpander *gitrepoexpander.Expander
-	log             logr.Logger
-	ctx             context.Context
+	paths            []string
+	recursive        bool
+	sortOutput       bool
+	excludeCRDs      bool
+	helmReleaseName  string
+	filters          *filter.FilterConfig
+	expanders        *expander.Registry
+	gitRepoExpander  *gitrepoexpander.Expander
+	log              logr.Logger
+	ctx              context.Context
 }
 
 func (p *Preview) loadRepo(path string) (*render.Render, error) {
@@ -193,6 +194,7 @@ func (p *Preview) renderFn(repo string, out **render.Render) func() error {
 }
 
 // Diff computes and writes the diff between two repository paths.
+// If a HelmRelease filter is set, only resources from that release are included.
 func (p *Preview) Diff(a, b string, out io.Writer) error {
 	g, _ := errgroup.WithContext(p.ctx)
 	var ar, br *render.Render
@@ -201,6 +203,13 @@ func (p *Preview) Diff(a, b string, out io.Writer) error {
 	if err := g.Wait(); err != nil {
 		return fmt.Errorf("render error: %w", err)
 	}
+
+	// Filter to a specific HelmRelease before applying output options.
+	if p.helmReleaseName != "" {
+		ar.FilterByLabel("helm.toolkit.fluxcd.io/name", p.helmReleaseName)
+		br.FilterByLabel("helm.toolkit.fluxcd.io/name", p.helmReleaseName)
+	}
+
 	p.applyOutputOptions(ar)
 	p.applyOutputOptions(br)
 	if err := diff.Diff(ar, br, out); err != nil {
@@ -345,6 +354,15 @@ func WithSort() Opt {
 func WithExcludeCRDs() Opt {
 	return func(p *Preview) error {
 		p.excludeCRDs = true
+		return nil
+	}
+}
+
+// WithHelmReleaseFilter filters diff output to only resources from the
+// specified HelmRelease (matched by the helm.toolkit.fluxcd.io/name label).
+func WithHelmReleaseFilter(name string) Opt {
+	return func(p *Preview) error {
+		p.helmReleaseName = name
 		return nil
 	}
 }

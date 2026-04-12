@@ -67,3 +67,13 @@ func TestWithExcludeCRDs(t *testing.T) {
 		t.Error("expected excludeCRDs to be true")
 	}
 }
+
+func TestWithHelmReleaseFilter(t *testing.T) {
+	p, err := New(WithHelmReleaseFilter("my-release"))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if p.helmReleaseName != "my-release" {
+		t.Errorf("expected helmReleaseName 'my-release', got %q", p.helmReleaseName)
+	}
+}

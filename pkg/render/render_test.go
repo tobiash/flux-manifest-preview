@@ -115,3 +115,59 @@ func newRenderFromYAML(t *testing.T, yamls ...string) *Render {
 	}
 	return r
 }
+
+func TestFilterByLabel(t *testing.T) {
+	r := newRenderFromYAML(t,
+		`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cm-a
+  namespace: default
+  labels:
+    helm.toolkit.fluxcd.io/name: my-release
+    helm.toolkit.fluxcd.io/namespace: flux-system
+`,
+		`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cm-b
+  namespace: default
+  labels:
+    helm.toolkit.fluxcd.io/name: other-release
+    helm.toolkit.fluxcd.io/namespace: flux-system
+`,
+		`apiVersion: v1
+kind: Service
+metadata:
+  name: svc-a
+  namespace: default
+`,
+	)
+
+	r.FilterByLabel("helm.toolkit.fluxcd.io/name", "my-release")
+
+	resources := r.Resources()
+	if len(resources) != 1 {
+		t.Fatalf("expected 1 resource after label filtering, got %d", len(resources))
+	}
+	if resources[0].GetName() != "cm-a" {
+		t.Errorf("expected cm-a, got %s", resources[0].GetName())
+	}
+}
+
+func TestFilterByLabel_NoMatch(t *testing.T) {
+	r := newRenderFromYAML(t,
+		`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cm-a
+  namespace: default
+`,
+	)
+
+	r.FilterByLabel("helm.toolkit.fluxcd.io/name", "nonexistent")
+
+	if r.Size() != 0 {
+		t.Errorf("expected 0 resources, got %d", r.Size())
+	}
+}

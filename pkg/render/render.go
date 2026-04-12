@@ -155,6 +155,16 @@ func (r *Render) Sort() {
 	}
 }
 
+// FilterByLabel removes all resources that do not have the given label key
+// set to the given value. Resources without the label are removed.
+func (r *Render) FilterByLabel(key, value string) {
+	for _, res := range r.Resources() {
+		if res.GetLabels()[key] != value {
+			r.Remove(res.CurId())
+		}
+	}
+}
+
 // FilterCRDs removes all CustomResourceDefinition resources from the render.
 func (r *Render) FilterCRDs() {
 	for _, res := range r.Resources() {

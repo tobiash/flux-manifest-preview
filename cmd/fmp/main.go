@@ -25,6 +25,7 @@ var (
 	quiet          bool
 	resolveGit     bool
 	outputFormat   string
+	helmRelease   string
 
 	helmRegistryConfig   string
 	helmRepositoryConfig string
@@ -91,6 +92,9 @@ func main() {
 			if err != nil {
 				return err
 			}
+			if helmRelease != "" {
+				opts = append(opts, preview.WithHelmReleaseFilter(helmRelease))
+			}
 			p, err := preview.New(opts...)
 			if err != nil {
 				return fmt.Errorf("error creating preview: %w", err)
@@ -98,6 +102,7 @@ func main() {
 			return p.Diff(args[0], args[1], os.Stdout)
 		},
 	}
+	diffCmd.Flags().StringVar(&helmRelease, "hr", "", "Filter diff to a specific HelmRelease by name")
 	testCmd := &cobra.Command{
 		Use:   "test <path>",
 		Short: "Validate all Kustomizations build and HelmReleases render",

@@ -90,12 +90,18 @@ func (r *Runner) RenderCharts(ctx context.Context, releases []RenderTask) (resma
 			r.logger.Info("skipping chart render", "chart", chartResult.task.chart, "namespace", chartResult.task.namespace, "error", chartResult.err)
 			continue
 		}
-
-		// Helm's dry-run output does not include metadata.namespace on rendered
-		// resources. Set it on all namespace-scoped resources that lack one,
-		// matching Flux's behavior: spec.targetNamespace || metadata.namespace.
+	// Stamp origin labels and set namespace on rendered resources.
 		ns := chartResult.task.namespace
 		for _, res := range chartResult.resources.Resources() {
+			// Add Flux origin labels so resources can be traced back to their HelmRelease.
+			labels := res.GetLabels()
+			if labels == nil {
+				labels = make(map[string]string)
+			}
+			labels["helm.toolkit.fluxcd.io/name"] = chartResult.task.releaseName
+			labels["helm.toolkit.fluxcd.io/namespace"] = chartResult.task.namespace
+			res.SetLabels(labels)
+
 			if !res.GetGvk().IsClusterScoped() && res.GetNamespace() == "" {
 				res.SetNamespace(ns)
 			}
