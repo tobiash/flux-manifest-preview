@@ -16,7 +16,11 @@ inputs:
     required: false
     default: ''
   filter:
-    description: KIO filters to apply to rendered YAML
+    description: KIO filters to apply to rendered YAML (overrides .fmp.yaml filters)
+    required: false
+    default: ''
+  config:
+    description: Path to an explicit .fmp.yaml config file (overrides auto-discovery)
     required: false
     default: ''
 outputs:
@@ -73,3 +77,4 @@ runs:
         FMP_RENDER_HELM: ${{ inputs.helm }}
         FMP_KUSTOMIZATIONS: ${{ inputs.kustomizations }}
         FMP_FILTER: ${{ inputs.filter }}
+        FMP_CONFIG: ${{ inputs.config }}

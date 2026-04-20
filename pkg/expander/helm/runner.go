@@ -90,10 +90,8 @@ func (r *Runner) RenderCharts(ctx context.Context, releases []RenderTask) (resma
 			r.logger.Info("skipping chart render", "chart", chartResult.task.chart, "namespace", chartResult.task.namespace, "error", chartResult.err)
 			continue
 		}
-	// Stamp origin labels and set namespace on rendered resources.
 		ns := chartResult.task.namespace
 		for _, res := range chartResult.resources.Resources() {
-			// Add Flux origin labels so resources can be traced back to their HelmRelease.
 			labels := res.GetLabels()
 			if labels == nil {
 				labels = make(map[string]string)
@@ -282,7 +280,6 @@ func (r *Runner) getAndUpdateRepo(entry *repo.Entry) error {
 	r.repos.Store(entry.URL, true)
 	return nil
 }
-
 
 // ResolveVersion resolves a potentially semver-range version string to a
 // concrete version by loading the repo index and finding the latest match.

@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	helmcli "helm.sh/helm/v4/pkg/cli"
 
+	"github.com/tobiash/flux-manifest-preview/pkg/config"
 	"github.com/tobiash/flux-manifest-preview/pkg/preview"
 )
 
@@ -24,8 +25,10 @@ var (
 	excludeCRDs    bool
 	quiet          bool
 	resolveGit     bool
+	sopsDecrypt    bool
 	outputFormat   string
-	helmRelease   string
+	helmRelease    string
+	initConfig     bool
 
 	helmRegistryConfig   string
 	helmRepositoryConfig string
@@ -52,12 +55,13 @@ func main() {
 	rootCmd.PersistentFlags().StringSliceVarP(&kustomizations, "path", "k", nil, "Path to render (kustomize base or directory of YAML, relative to repo root, repeatable)")
 	rootCmd.PersistentFlags().BoolVarP(&recursive, "recursive", "r", false, "Recursively discover all paths under each -k directory")
 	rootCmd.PersistentFlags().BoolVarP(&renderHelm, "render-helm", "H", true, "Render HelmRelease objects")
-	rootCmd.PersistentFlags().StringVar(&filtersFile, "filter", "", "KIO filters definition file")
-	rootCmd.PersistentFlags().StringVar(&filterYAML, "filter-yaml", "", "KIO filters YAML string")
+	rootCmd.PersistentFlags().StringVar(&filtersFile, "filter", "", "KIO filters definition file (overrides .fmp.yaml filters)")
+	rootCmd.PersistentFlags().StringVar(&filterYAML, "filter-yaml", "", "KIO filters YAML string (overrides .fmp.yaml filters)")
 	rootCmd.PersistentFlags().BoolVarP(&sortOutput, "sort", "s", false, "Sort output by (kind, namespace, name) for deterministic diffs")
 	rootCmd.PersistentFlags().BoolVar(&excludeCRDs, "exclude-crds", false, "Strip CustomResourceDefinitions from output")
 	rootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "Suppress informational output (only show errors)")
 	rootCmd.PersistentFlags().BoolVar(&resolveGit, "resolve-git", false, "Clone external GitRepository sources to temp dirs")
+	rootCmd.PersistentFlags().BoolVar(&sopsDecrypt, "sops-decrypt", false, "Decrypt SOPS-encrypted secrets (requires sops binary in PATH)")
 	rootCmd.PersistentFlags().StringVar(&helmRegistryConfig, "registry-config", "", "Helm Registry Config")
 	rootCmd.PersistentFlags().StringVar(&helmRepositoryConfig, "repository-config", "", "Helm Repository Config")
 	rootCmd.PersistentFlags().StringVar(&helmRepositoryCache, "repository-cache", "", "Helm Repository Cache")
@@ -67,7 +71,7 @@ func main() {
 		Short: "Render a single path",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts, err := buildOpts(log)
+			opts, err := buildOpts(log, args[0])
 			if err != nil {
 				return err
 			}
@@ -88,7 +92,7 @@ func main() {
 		Short: "Diff two paths",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts, err := buildOpts(log)
+			opts, err := buildOpts(log, args[0])
 			if err != nil {
 				return err
 			}
@@ -108,7 +112,7 @@ func main() {
 		Short: "Validate all Kustomizations build and HelmReleases render",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts, err := buildOpts(log)
+			opts, err := buildOpts(log, args[0])
 			if err != nil {
 				return err
 			}
@@ -129,7 +133,7 @@ func main() {
 		Short: "List Flux Kustomizations",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts, err := buildOpts(log)
+			opts, err := buildOpts(log, args[0])
 			if err != nil {
 				return err
 			}
@@ -150,7 +154,7 @@ func main() {
 		Short: "List HelmReleases",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts, err := buildOpts(log)
+			opts, err := buildOpts(log, args[0])
 			if err != nil {
 				return err
 			}
@@ -171,6 +175,10 @@ func main() {
 	ciCmd := &cobra.Command{
 		Use:   "ci",
 		Short: "Run CI diff using environment variables",
+		Long: `Run CI diff using environment variables.
+Auto-discovers .fmp.yaml from FMP_REPO_A (base branch).
+FMP_CONFIG can point to an explicit config file (overrides auto-discovery).
+CLI flags and FMP_* env vars override the config file.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repoA := os.Getenv("FMP_REPO_A")
 			repoB := os.Getenv("FMP_REPO_B")
@@ -178,7 +186,6 @@ func main() {
 				return fmt.Errorf("must set both FMP_REPO_A and FMP_REPO_B")
 			}
 
-			// Override flags from env vars before building options.
 			if ks := os.Getenv("FMP_KUSTOMIZATIONS"); ks != "" {
 				kustomizations = parseLines(ks)
 			}
@@ -186,7 +193,13 @@ func main() {
 				renderHelm = v == "true" || v == "1"
 			}
 
-			opts, err := buildOpts(log)
+			configRepo := repoA
+			if explicitConfig := os.Getenv("FMP_CONFIG"); explicitConfig != "" {
+				filtersFile = explicitConfig
+				configRepo = ""
+			}
+
+			opts, err := buildOpts(log, configRepo)
 			if err != nil {
 				return err
 			}
@@ -210,15 +223,49 @@ func main() {
 		},
 	}
 
-	rootCmd.AddCommand(renderCmd, diffCmd, testCmd, getCmd, ciCmd, versionCmd)
+	detectCmd := &cobra.Command{
+		Use:   "detect-permadiffs <path>",
+		Short: "Detect non-deterministic output and generate normalization filter config",
+		Long: `Renders the same path twice and compares the results.
+Any resource that differs between two renders of the same code is
+non-deterministic (e.g. auto-generated TLS keys). Outputs a filter
+config YAML that can be used with --filter to normalize these fields.
+
+Use --init to generate a complete .fmp.yaml config file in the repo.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if initConfig {
+				return generateInitConfig(args[0])
+			}
+			opts, err := buildOptsNoFilters(log, args[0])
+			if err != nil {
+				return err
+			}
+			p, err := preview.New(opts...)
+			if err != nil {
+				return fmt.Errorf("error creating preview: %w", err)
+			}
+			return p.DetectPermadiffs(args[0], os.Stdout)
+		},
+	}
+	detectCmd.Flags().BoolVar(&initConfig, "init", false, "Generate a .fmp.yaml config file in the repo root")
+
+	rootCmd.AddCommand(renderCmd, diffCmd, testCmd, getCmd, ciCmd, detectCmd, versionCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
 }
 
-func buildOpts(log logr.Logger) ([]preview.Opt, error) {
-	// In quiet mode, suppress info-level logs.
+func buildOpts(log logr.Logger, configRepoPath string) ([]preview.Opt, error) {
+	return buildOptsWithFilters(log, configRepoPath, true)
+}
+
+func buildOptsNoFilters(log logr.Logger, configRepoPath string) ([]preview.Opt, error) {
+	return buildOptsWithFilters(log, configRepoPath, false)
+}
+
+func buildOptsWithFilters(log logr.Logger, configRepoPath string, applyFilters bool) ([]preview.Opt, error) {
 	if quiet {
 		zl := zerolog.New(os.Stderr)
 		zl = zl.With().Caller().Timestamp().Logger().Output(zerolog.ConsoleWriter{Out: os.Stderr})
@@ -226,41 +273,149 @@ func buildOpts(log logr.Logger) ([]preview.Opt, error) {
 		log = zerologr.New(&zl)
 	}
 
-	opts := []preview.Opt{
-		preview.WithLogger(log),
-		preview.WithPaths(kustomizations, recursive),
+	cfg, err := config.LoadConfig(configRepoPath)
+	if err != nil {
+		return nil, fmt.Errorf("loading config: %w", err)
 	}
 
-	if resolveGit {
+	paths := kustomizations
+	doRecursive := recursive
+	doHelm := renderHelm
+	doResolveGit := resolveGit
+	doSort := sortOutput
+	doExcludeCRDs := excludeCRDs
+	doSOPSDecrypt := sopsDecrypt
+
+	if cfg != nil {
+		if len(paths) == 0 && len(cfg.Paths) > 0 {
+			paths = cfg.Paths
+		}
+		if !cmdChanged("recursive") {
+			doRecursive = config.BoolOr(cfg.Recursive, doRecursive)
+		}
+		if !cmdChanged("render-helm") {
+			doHelm = config.BoolOr(cfg.Helm, doHelm)
+		}
+		if !cmdChanged("resolve-git") {
+			doResolveGit = config.BoolOr(cfg.ResolveGit, doResolveGit)
+		}
+		if !cmdChanged("sort") {
+			doSort = config.BoolOr(cfg.Sort, doSort)
+		}
+		if !cmdChanged("exclude-crds") {
+			doExcludeCRDs = config.BoolOr(cfg.ExcludeCRDs, doExcludeCRDs)
+		}
+		if !cmdChanged("sops-decrypt") {
+			doSOPSDecrypt = config.BoolOr(cfg.SOPSDecrypt, doSOPSDecrypt)
+		}
+		if cfg.HelmSettings != nil {
+			if helmRegistryConfig == "" {
+				helmRegistryConfig = cfg.HelmSettings.RegistryConfig
+			}
+			if helmRepositoryConfig == "" {
+				helmRepositoryConfig = cfg.HelmSettings.RepositoryConfig
+			}
+			if helmRepositoryCache == "" {
+				helmRepositoryCache = cfg.HelmSettings.RepositoryCache
+			}
+		}
+	}
+
+	opts := []preview.Opt{
+		preview.WithLogger(log),
+		preview.WithPaths(paths, doRecursive),
+	}
+
+	if doResolveGit {
 		opts = append(opts, preview.WithGitRepo())
 	}
 
 	opts = append(opts, preview.WithFluxKS())
 
-	if renderHelm {
+	if doHelm {
 		opts = append(opts, preview.WithHelm(helmSettings()))
 	}
 
-	if sortOutput {
+	if doSort {
 		opts = append(opts, preview.WithSort())
 	}
 
-	if excludeCRDs {
+	if doExcludeCRDs {
 		opts = append(opts, preview.WithExcludeCRDs())
 	}
 
-	if filtersFile != "" {
-		f, err := os.Open(filtersFile)
-		if err != nil {
-			return nil, fmt.Errorf("opening filter file: %w", err)
+	if doSOPSDecrypt {
+		opts = append(opts, preview.WithSOPSDecrypt())
+	}
+
+	if applyFilters {
+		if filtersFile != "" {
+			f, err := os.Open(filtersFile)
+			if err != nil {
+				return nil, fmt.Errorf("opening filter file: %w", err)
+			}
+			defer f.Close()
+			opts = append(opts, preview.WithFilterFile(f))
+		} else if filterYAML != "" {
+			opts = append(opts, preview.WithFilterYAML(filterYAML))
+		} else if cfg != nil && len(cfg.Filters.Filters) > 0 {
+			opts = append(opts, preview.WithFilterConfig(&cfg.Filters))
 		}
-		defer f.Close()
-		opts = append(opts, preview.WithFilterFile(f))
-	} else if filterYAML != "" {
-		opts = append(opts, preview.WithFilterYAML(filterYAML))
 	}
 
 	return opts, nil
+}
+
+func cmdChanged(flagName string) bool {
+	for _, cmd := range os.Args[1:] {
+		for _, name := range []string{"--" + flagName, "-" + shortFlag(flagName)} {
+			if cmd == name || strings.HasPrefix(cmd, name+"=") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func shortFlag(name string) string {
+	switch name {
+	case "recursive":
+		return "r"
+	case "render-helm":
+		return "H"
+	case "sort":
+		return "s"
+	case "quiet":
+		return "q"
+	default:
+		return ""
+	}
+}
+
+func generateInitConfig(repoPath string) error {
+	dest := config.DiscoverConfigPath(repoPath)
+	if dest != "" {
+		return fmt.Errorf("config file already exists at %s (remove it first or edit manually)", dest)
+	}
+
+	dest = repoPath + "/.fmp.yaml"
+
+	opts, err := buildOpts(logr.Discard(), repoPath)
+	if err != nil {
+		return err
+	}
+
+	p, err := preview.New(opts...)
+	if err != nil {
+		return fmt.Errorf("error creating preview: %w", err)
+	}
+
+	if err := p.GenerateInitConfig(repoPath, dest); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(os.Stderr, "Generated %s\n", dest)
+	return nil
 }
 
 func helmSettings() *helmcli.EnvSettings {

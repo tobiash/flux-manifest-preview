@@ -11,12 +11,13 @@ import (
 )
 
 var Filters = map[string]func() kio.Filter{
-	"FileSetter":    func() kio.Filter { return &kiofilters.FileSetter{} },
-	"FormatFilter":  func() kio.Filter { return &kiofilters.FormatFilter{} },
-	"GrepFilter":    func() kio.Filter { return &kiofilters.GrepFilter{} },
-	"MatchModifier": func() kio.Filter { return &kiofilters.MatchModifyFilter{} },
-	"Modifier":      func() kio.Filter { return &kiofilters.Modifier{} },
-	"LabelRemover":  func() kio.Filter { return &LabelRemover{} },
+	"FileSetter":      func() kio.Filter { return &kiofilters.FileSetter{} },
+	"FormatFilter":    func() kio.Filter { return &kiofilters.FormatFilter{} },
+	"GrepFilter":      func() kio.Filter { return &kiofilters.GrepFilter{} },
+	"MatchModifier":   func() kio.Filter { return &kiofilters.MatchModifyFilter{} },
+	"Modifier":        func() kio.Filter { return &kiofilters.Modifier{} },
+	"LabelRemover":    func() kio.Filter { return &LabelRemover{} },
+	"FieldNormalizer": func() kio.Filter { return &FieldNormalizer{} },
 }
 
 // KFilter wraps a kio.Filter for YAML marshaling and unmarshaling.

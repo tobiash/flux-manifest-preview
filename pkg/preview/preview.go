@@ -15,24 +15,26 @@ import (
 	helmexpander "github.com/tobiash/flux-manifest-preview/pkg/expander/helm"
 	"github.com/tobiash/flux-manifest-preview/pkg/filter"
 	"github.com/tobiash/flux-manifest-preview/pkg/render"
+	"github.com/tobiash/flux-manifest-preview/pkg/sops"
 	"golang.org/x/sync/errgroup"
 	"gopkg.in/yaml.v3"
 	helmcli "helm.sh/helm/v4/pkg/cli"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 )
 
-// Preview renders and diffs Flux GitOps resources.
 type Preview struct {
-	paths            []string
-	recursive        bool
-	sortOutput       bool
-	excludeCRDs      bool
-	helmReleaseName  string
-	filters          *filter.FilterConfig
-	expanders        *expander.Registry
-	gitRepoExpander  *gitrepoexpander.Expander
-	log              logr.Logger
-	ctx              context.Context
+	paths           []string
+	recursive       bool
+	sortOutput      bool
+	excludeCRDs     bool
+	helmReleaseName string
+	sopsDecrypt     bool
+	filters         *filter.FilterConfig
+	expanders       *expander.Registry
+	gitRepoExpander *gitrepoexpander.Expander
+	helmSettings    *helmcli.EnvSettings
+	log             logr.Logger
+	ctx             context.Context
 }
 
 func (p *Preview) loadRepo(path string) (*render.Render, error) {
@@ -40,20 +42,16 @@ func (p *Preview) loadRepo(path string) (*render.Render, error) {
 	r := render.NewDefaultRender(log)
 	fSys := filesys.MakeFsOnDisk()
 
-	// Seed the queue with user-specified paths.
 	queue := make([]expander.DiscoveredPath, len(p.paths))
 	for i, p := range p.paths {
 		queue[i] = expander.DiscoveredPath{Path: p}
 	}
 
-	// userPaths tracks which paths were explicitly requested by the user.
-	// Missing user paths are errors; missing discovered paths are skipped.
 	userPaths := make(map[string]bool, len(p.paths))
 	for _, p := range p.paths {
 		userPaths[p] = true
 	}
 
-	// visited tracks paths already rendered to prevent cycles.
 	visited := make(map[string]bool)
 
 	const maxIterations = 100
@@ -62,7 +60,6 @@ func (p *Preview) loadRepo(path string) (*render.Render, error) {
 			return nil, fmt.Errorf("expansion loop exceeded %d iterations, possible cycle", maxIterations)
 		}
 
-		// Render all newly discovered paths.
 		for _, dp := range queue {
 			baseDir := dp.BaseDir
 			if baseDir == "" {
@@ -98,7 +95,6 @@ func (p *Preview) loadRepo(path string) (*render.Render, error) {
 			}
 		}
 
-		// Run expanders to discover new paths and expand resources.
 		queue = nil
 		if p.expanders != nil {
 			result, err := p.expanders.Expand(p.ctx, r)
@@ -110,7 +106,6 @@ func (p *Preview) loadRepo(path string) (*render.Render, error) {
 					return nil, fmt.Errorf("failed to absorb expanded resources: %w", err)
 				}
 			}
-			// Only queue paths we haven't rendered yet.
 			for _, dp := range result.DiscoveredPaths {
 				baseDir := dp.BaseDir
 				if baseDir == "" {
@@ -124,7 +119,6 @@ func (p *Preview) loadRepo(path string) (*render.Render, error) {
 		}
 	}
 
-
 	if p.filters != nil {
 		for _, f := range p.filters.Filters {
 			if err := r.ApplyFilter(f.Filter); err != nil {
@@ -133,10 +127,15 @@ func (p *Preview) loadRepo(path string) (*render.Render, error) {
 		}
 	}
 
+	if p.sopsDecrypt {
+		if err := sops.DecryptResources(r); err != nil {
+			return nil, fmt.Errorf("sops decryption failed: %w", err)
+		}
+	}
+
 	return r, nil
 }
 
-// Render renders the resources at path and writes the YAML output.
 func (p *Preview) Render(path string, out io.Writer) error {
 	r, err := p.loadRepo(path)
 	if err != nil {
@@ -147,14 +146,12 @@ func (p *Preview) Render(path string, out io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("error transforming to yaml: %w", err)
 	}
-	_, err = out.Write(yaml)
-	if err != nil {
+	if _, err := out.Write(yaml); err != nil {
 		return fmt.Errorf("error writing output: %w", err)
 	}
 	return nil
 }
 
-// RenderJSON renders the resources at path and writes JSON output.
 func (p *Preview) RenderJSON(path string, out io.Writer) error {
 	r, err := p.loadRepo(path)
 	if err != nil {
@@ -165,16 +162,12 @@ func (p *Preview) RenderJSON(path string, out io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("error transforming to json: %w", err)
 	}
-	_, err = out.Write(json)
-	if err != nil {
+	if _, err := out.Write(json); err != nil {
 		return fmt.Errorf("error writing output: %w", err)
 	}
 	return nil
 }
 
-
-// Test validates that all Kustomizations build and HelmReleases render.
-// Returns nil on success, or an error describing the failure.
 func (p *Preview) Test(path string, out io.Writer) error {
 	_, err := p.loadRepo(path)
 	if err != nil {
@@ -185,26 +178,23 @@ func (p *Preview) Test(path string, out io.Writer) error {
 	return nil
 }
 
-func (p *Preview) renderFn(repo string, out **render.Render) func() error {
-	return func() error {
-		var err error
-		*out, err = p.loadRepo(repo)
-		return err
-	}
-}
-
-// Diff computes and writes the diff between two repository paths.
-// If a HelmRelease filter is set, only resources from that release are included.
 func (p *Preview) Diff(a, b string, out io.Writer) error {
 	g, _ := errgroup.WithContext(p.ctx)
 	var ar, br *render.Render
-	g.Go(p.renderFn(a, &ar))
-	g.Go(p.renderFn(b, &br))
+	g.Go(func() error {
+		var err error
+		ar, err = p.freshLoadRepo(a)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		br, err = p.freshLoadRepo(b)
+		return err
+	})
 	if err := g.Wait(); err != nil {
 		return fmt.Errorf("render error: %w", err)
 	}
 
-	// Filter to a specific HelmRelease before applying output options.
 	if p.helmReleaseName != "" {
 		ar.FilterByLabel("helm.toolkit.fluxcd.io/name", p.helmReleaseName)
 		br.FilterByLabel("helm.toolkit.fluxcd.io/name", p.helmReleaseName)
@@ -218,10 +208,8 @@ func (p *Preview) Diff(a, b string, out io.Writer) error {
 	return nil
 }
 
-// Opt is a functional option for configuring Preview.
 type Opt func(p *Preview) error
 
-// New creates a new Preview with the given options.
 func New(opts ...Opt) (*Preview, error) {
 	var p Preview
 	for _, opt := range opts {
@@ -235,7 +223,6 @@ func New(opts ...Opt) (*Preview, error) {
 	return &p, nil
 }
 
-// WithLogger sets the logger for the Preview.
 func WithLogger(log logr.Logger) Opt {
 	return func(p *Preview) error {
 		p.log = log
@@ -243,7 +230,6 @@ func WithLogger(log logr.Logger) Opt {
 	}
 }
 
-// WithFilterFile configures filters from a YAML file.
 func WithFilterFile(f *os.File) Opt {
 	return func(p *Preview) error {
 		m := &filter.FilterConfig{}
@@ -256,7 +242,6 @@ func WithFilterFile(f *os.File) Opt {
 	}
 }
 
-// WithFilterYAML configures filters from a raw YAML string.
 func WithFilterYAML(f string) Opt {
 	return func(p *Preview) error {
 		m := &filter.FilterConfig{}
@@ -268,9 +253,16 @@ func WithFilterYAML(f string) Opt {
 	}
 }
 
-// WithHelm registers the Helm expander with the given settings.
+func WithFilterConfig(fc *filter.FilterConfig) Opt {
+	return func(p *Preview) error {
+		p.filters = fc
+		return nil
+	}
+}
+
 func WithHelm(helmsettings *helmcli.EnvSettings) Opt {
 	return func(p *Preview) error {
+		p.helmSettings = helmsettings
 		p.ensureRegistry()
 		runner := helmexpander.NewRunner(helmsettings, p.log)
 		p.expanders.Register(helmexpander.NewExpander(runner, p.log))
@@ -278,9 +270,6 @@ func WithHelm(helmsettings *helmcli.EnvSettings) Opt {
 	}
 }
 
-// WithFluxKS registers the Flux Kustomization expander which discovers
-// spec.path from Flux Kustomization CRs and feeds them back to the renderer.
-// If a GitRepository expander is registered, it is used to resolve source paths.
 func WithFluxKS() Opt {
 	return func(p *Preview) error {
 		p.ensureRegistry()
@@ -293,8 +282,6 @@ func WithFluxKS() Opt {
 	}
 }
 
-// WithGitRepo registers the GitRepository expander which clones external
-// repos to temp directories. Must be called before WithFluxKS.
 func WithGitRepo() Opt {
 	return func(p *Preview) error {
 		p.ensureRegistry()
@@ -308,14 +295,12 @@ func WithGitRepo() Opt {
 	}
 }
 
-// ensureRegistry lazily initializes the expander registry.
 func (p *Preview) ensureRegistry() {
 	if p.expanders == nil {
 		p.expanders = expander.NewRegistry(p.log)
 	}
 }
 
-// WithPaths configures the paths to render and whether to recurse into subdirectories.
 func WithPaths(paths []string, recursive bool) Opt {
 	return func(p *Preview) error {
 		p.paths = append(p.paths, paths...)
@@ -324,7 +309,6 @@ func WithPaths(paths []string, recursive bool) Opt {
 	}
 }
 
-// WithContext sets the context for the Preview.
 func WithContext(ctx context.Context) Opt {
 	return func(p *Preview) error {
 		p.ctx = ctx
@@ -332,7 +316,6 @@ func WithContext(ctx context.Context) Opt {
 	}
 }
 
-// applyOutputOptions applies sort and CRD filtering to the render result.
 func (p *Preview) applyOutputOptions(r *render.Render) {
 	if p.sortOutput {
 		r.Sort()
@@ -342,7 +325,6 @@ func (p *Preview) applyOutputOptions(r *render.Render) {
 	}
 }
 
-// WithSort enables deterministic output sorting by (kind, namespace, name).
 func WithSort() Opt {
 	return func(p *Preview) error {
 		p.sortOutput = true
@@ -350,7 +332,6 @@ func WithSort() Opt {
 	}
 }
 
-// WithExcludeCRDs strips CustomResourceDefinitions from rendered output.
 func WithExcludeCRDs() Opt {
 	return func(p *Preview) error {
 		p.excludeCRDs = true
@@ -358,11 +339,122 @@ func WithExcludeCRDs() Opt {
 	}
 }
 
-// WithHelmReleaseFilter filters diff output to only resources from the
-// specified HelmRelease (matched by the helm.toolkit.fluxcd.io/name label).
 func WithHelmReleaseFilter(name string) Opt {
 	return func(p *Preview) error {
 		p.helmReleaseName = name
 		return nil
 	}
+}
+
+func WithSOPSDecrypt() Opt {
+	return func(p *Preview) error {
+		p.sopsDecrypt = true
+		return nil
+	}
+}
+
+func (p *Preview) DetectPermadiffs(path string, out io.Writer) error {
+	ar, err := p.freshLoadRepo(path)
+	if err != nil {
+		return fmt.Errorf("error loading repo (first pass): %w", err)
+	}
+
+	br, err := p.freshLoadRepo(path)
+	if err != nil {
+		return fmt.Errorf("error loading repo (second pass): %w", err)
+	}
+
+	return diff.WritePermadiffConfig(ar, br, out)
+}
+
+func (p *Preview) GenerateInitConfig(path, destPath string) error {
+	ar, err := p.freshLoadRepo(path)
+	if err != nil {
+		return fmt.Errorf("error loading repo (first pass): %w", err)
+	}
+
+	br, err := p.freshLoadRepo(path)
+	if err != nil {
+		return fmt.Errorf("error loading repo (second pass): %w", err)
+	}
+
+	diffs, err := diff.DetectPermadiffs(ar, br)
+	if err != nil {
+		return fmt.Errorf("detecting permadiffs: %w", err)
+	}
+
+	type initConfig struct {
+		Paths       []string `yaml:"paths,omitempty"`
+		Recursive   *bool    `yaml:"recursive,omitempty"`
+		Helm        *bool    `yaml:"helm,omitempty"`
+		ResolveGit  *bool    `yaml:"resolve-git,omitempty"`
+		SOPSDecrypt *bool    `yaml:"sops-decrypt,omitempty"`
+		Sort        *bool    `yaml:"sort,omitempty"`
+		ExcludeCRDs *bool    `yaml:"exclude-crds,omitempty"`
+		Filters     []any    `yaml:"filters,omitempty"`
+	}
+
+	cfg := initConfig{
+		Sort:        boolPtr(true),
+		ExcludeCRDs: boolPtr(true),
+	}
+
+	if len(diffs) > 0 {
+		rules := diff.GroupDiffsToRules(diffs)
+		for _, rule := range rules {
+			cfg.Filters = append(cfg.Filters, map[string]any{
+				"kind":       "FieldNormalizer",
+				"match":      rule.Match,
+				"fieldPaths": rule.FieldPaths,
+			})
+		}
+	}
+
+	data, err := yaml.Marshal(&cfg)
+	if err != nil {
+		return fmt.Errorf("marshaling config: %w", err)
+	}
+
+	f, err := os.Create(destPath)
+	if err != nil {
+		return fmt.Errorf("creating %s: %w", destPath, err)
+	}
+	defer f.Close()
+
+	if _, err := fmt.Fprint(f, "# .fmp.yaml — fmp per-repo configuration\n"); err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (p *Preview) freshLoadRepo(path string) (*render.Render, error) {
+	fresh := &Preview{
+		paths:       p.paths,
+		recursive:   p.recursive,
+		sortOutput:  p.sortOutput,
+		excludeCRDs: p.excludeCRDs,
+		sopsDecrypt: p.sopsDecrypt,
+		filters:     p.filters,
+		log:         p.log,
+		ctx:         p.ctx,
+	}
+
+	fresh.ensureRegistry()
+	if p.gitRepoExpander != nil {
+		fresh.expanders.Register(p.gitRepoExpander)
+	}
+	fresh.expanders.Register(fluxksexpander.NewExpander(p.log))
+	if p.helmSettings != nil {
+		runner := helmexpander.NewRunner(p.helmSettings, p.log)
+		fresh.expanders.Register(helmexpander.NewExpander(runner, p.log))
+	}
+
+	return fresh.loadRepo(path)
+}
+
+func boolPtr(b bool) *bool {
+	return &b
 }

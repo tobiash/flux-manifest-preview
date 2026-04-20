@@ -198,7 +198,6 @@ func (s *expandState) renderAllCharts(ctx context.Context) (resmap.ResMap, error
 		chartName := nestedString(h.spec, "chart", "spec", "chart")
 		chartVersion := nestedString(h.spec, "chart", "spec", "version")
 
-		// Resolve semver ranges to concrete versions.
 		if resolved, err := s.runner.ResolveVersion(src.url, chartName, chartVersion); err == nil {
 			chartVersion = resolved
 		} else {
