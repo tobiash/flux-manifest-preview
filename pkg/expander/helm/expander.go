@@ -137,11 +137,11 @@ func (e *Expander) Expand(ctx context.Context, r *render.Render) (*expander.Expa
 		}
 	}
 
-	resources, err := s.renderAllCharts(ctx)
+	resources, errs, err := s.renderAllCharts(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return &expander.ExpandResult{Resources: resources}, nil
+	return &expander.ExpandResult{Resources: resources, Errors: errs}, nil
 }
 
 func (s *expandState) parseHelmRelease(res *resource.Resource) (unstructuredRelease, error) {
@@ -182,16 +182,18 @@ func (s *expandState) parseRepository(res *resource.Resource) (unstructuredRepos
 		isOCI:     typ == "oci" || res.GetKind() == "OCIRepository",
 	}, nil
 }
-func (s *expandState) renderAllCharts(ctx context.Context) (resmap.ResMap, error) {
+func (s *expandState) renderAllCharts(ctx context.Context) (resmap.ResMap, []error, error) {
 	var tasks []RenderTask
+	var skipErrs []error
 	for _, h := range s.releases {
 		values, err := s.composeValues(h)
 		if err != nil {
-			return nil, fmt.Errorf("error composing values for %s/%s: %w", h.namespace, h.name, err)
+			return nil, nil, fmt.Errorf("error composing values for %s/%s: %w", h.namespace, h.name, err)
 		}
 		src, err := s.findChartUrl(h)
 		if err != nil {
 			s.logger.Info("skipping HelmRelease, cannot resolve chart source", "name", h.name, "namespace", h.namespace, "error", err)
+			skipErrs = append(skipErrs, fmt.Errorf("HelmRelease %s/%s: %w", h.namespace, h.name, err))
 			continue
 		}
 
@@ -230,9 +232,13 @@ func (s *expandState) renderAllCharts(ctx context.Context) (resmap.ResMap, error
 	}
 
 	if len(tasks) == 0 {
-		return resmap.New(), nil
+		return resmap.New(), skipErrs, nil
 	}
-	return s.runner.RenderCharts(ctx, tasks)
+	resources, renderErrs, err := s.runner.RenderCharts(ctx, tasks)
+	if err != nil {
+		return nil, nil, err
+	}
+	return resources, append(skipErrs, renderErrs...), nil
 }
 
 func (s *expandState) composeValues(hr unstructuredRelease) (chartcommon.Values, error) {

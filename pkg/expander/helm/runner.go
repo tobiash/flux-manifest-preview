@@ -61,8 +61,8 @@ func NewRunner(settings *helmcli.EnvSettings, log logr.Logger) *Runner {
 }
 
 // RenderCharts renders multiple charts in parallel.
-// Charts that fail to render are skipped with a log warning; partial results are returned.
-func (r *Runner) RenderCharts(ctx context.Context, releases []RenderTask) (resmap.ResMap, error) {
+// Charts that fail to render are collected as errors and skipped; partial results are returned.
+func (r *Runner) RenderCharts(ctx context.Context, releases []RenderTask) (resmap.ResMap, []error, error) {
 	res := resmap.New()
 
 	type result struct {
@@ -85,9 +85,11 @@ func (r *Runner) RenderCharts(ctx context.Context, releases []RenderTask) (resma
 	}
 	wg.Wait()
 
+	var errs []error
 	for _, chartResult := range results {
 		if chartResult.err != nil {
 			r.logger.Info("skipping chart render", "chart", chartResult.task.chart, "namespace", chartResult.task.namespace, "error", chartResult.err)
+			errs = append(errs, fmt.Errorf("HelmRelease %s/%s: %w", chartResult.task.namespace, chartResult.task.chart, chartResult.err))
 			continue
 		}
 		ns := chartResult.task.namespace
@@ -106,10 +108,10 @@ func (r *Runner) RenderCharts(ctx context.Context, releases []RenderTask) (resma
 		}
 
 		if err := absorbResMap(res, chartResult.resources, r.logger); err != nil {
-			return nil, fmt.Errorf("absorbing resources for %s/%s: %w", chartResult.task.releaseName, chartResult.task.namespace, err)
+			return nil, errs, fmt.Errorf("absorbing resources for %s/%s: %w", chartResult.task.releaseName, chartResult.task.namespace, err)
 		}
 	}
-	return res, nil
+	return res, errs, nil
 }
 
 func (r *Runner) renderChart(ctx context.Context, t *RenderTask) (resmap.ResMap, error) {

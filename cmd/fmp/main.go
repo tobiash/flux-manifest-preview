@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -14,6 +15,8 @@ import (
 	"github.com/tobiash/flux-manifest-preview/pkg/config"
 	"github.com/tobiash/flux-manifest-preview/pkg/preview"
 )
+
+var expansionError *preview.ExpansionError
 
 var (
 	kustomizations []string
@@ -250,9 +253,17 @@ Use --init to generate a complete .fmp.yaml config file in the repo.`,
 	}
 	detectCmd.Flags().BoolVar(&initConfig, "init", false, "Generate a .fmp.yaml config file in the repo root")
 
+	rootCmd.SilenceErrors = true
+	rootCmd.SilenceUsage = true
 	rootCmd.AddCommand(renderCmd, diffCmd, testCmd, getCmd, ciCmd, detectCmd, versionCmd)
 
 	if err := rootCmd.Execute(); err != nil {
+		if errors.As(err, &expansionError) {
+			for _, e := range expansionError.Errors {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", e)
+			}
+			os.Exit(1)
+		}
 		os.Exit(1)
 	}
 }

@@ -35,15 +35,16 @@ func (p *Preview) ListKustomizations(path string) ([]KustomizationInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return extractKustomizations(r), nil
+	return extractKustomizations(r.render), nil
 }
 
+// ListHelmReleases discovers and lists HelmReleases from the repo at path.
 func (p *Preview) ListHelmReleases(path string) ([]HelmReleaseInfo, error) {
 	r, err := p.loadRepo(path)
 	if err != nil {
 		return nil, err
 	}
-	return extractHelmReleases(r), nil
+	return extractHelmReleases(r.render), nil
 }
 
 func extractKustomizations(r *render.Render) []KustomizationInfo {
