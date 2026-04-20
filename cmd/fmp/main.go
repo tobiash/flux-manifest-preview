@@ -26,6 +26,7 @@ var (
 	filterYAML     string
 	sortOutput     bool
 	excludeCRDs    bool
+	verbose        bool
 	quiet          bool
 	resolveGit     bool
 	sopsDecrypt    bool
@@ -47,10 +48,6 @@ func main() {
 	zerologr.NameFieldName = "logger"
 	zerologr.NameSeparator = "/"
 
-	zl := zerolog.New(os.Stderr)
-	zl = zl.With().Caller().Timestamp().Logger().Output(zerolog.ConsoleWriter{Out: os.Stderr})
-	var log logr.Logger = zerologr.New(&zl)
-
 	rootCmd := &cobra.Command{
 		Use:   "fmp",
 		Short: "Flux Manifest Preview — render and diff Flux GitOps resources",
@@ -63,6 +60,7 @@ func main() {
 	rootCmd.PersistentFlags().StringVar(&filterYAML, "filter-yaml", "", "KIO filters YAML string (overrides .fmp.yaml filters)")
 	rootCmd.PersistentFlags().BoolVarP(&sortOutput, "sort", "s", false, "Sort output by (kind, namespace, name) for deterministic diffs")
 	rootCmd.PersistentFlags().BoolVar(&excludeCRDs, "exclude-crds", false, "Strip CustomResourceDefinitions from output")
+	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable debug logging")
 	rootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "Suppress informational output (only show errors)")
 	rootCmd.PersistentFlags().BoolVar(&resolveGit, "resolve-git", false, "Clone external GitRepository sources to temp dirs")
 	rootCmd.PersistentFlags().BoolVar(&sopsDecrypt, "sops-decrypt", false, "Decrypt SOPS-encrypted secrets (requires sops binary in PATH)")
@@ -75,6 +73,7 @@ func main() {
 		Short: "Render a single path",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			log := cliLogger()
 			opts, err := buildOpts(log, args[0])
 			if err != nil {
 				return err
@@ -92,22 +91,24 @@ func main() {
 
 	renderCmd.Flags().StringVarP(&outputFormat, "output", "o", "yaml", "Output format (yaml or json)")
 	diffCmd := &cobra.Command{
-		Use:   "diff <path-a> <path-b>",
-		Short: "Diff two paths",
-		Args:  cobra.ExactArgs(2),
+		Use:   "diff [<rev>|<source-a> <source-b>]",
+		Short: "Diff git revisions or directories",
+		Long: `Diff rendered manifests from git revisions or filesystem paths.
+
+With no arguments, compares HEAD against the current dirty worktree.
+With one argument, compares that git revision against the current worktree.
+With two arguments, existing filesystem paths are treated as directory inputs,
+and valid git revisions are treated as revision inputs. For mixed or ambiguous
+inputs, use explicit git: or path: prefixes.`,
+		Example: `  fmp diff
+  fmp diff HEAD~1
+  fmp diff main feature-branch
+  fmp diff ./before ./after
+  fmp diff git:HEAD path:/tmp/rendered`,
+		Args: validateDiffArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			opts, err := buildOpts(log, args[0])
-			if err != nil {
-				return err
-			}
-			if helmRelease != "" {
-				opts = append(opts, preview.WithHelmReleaseFilter(helmRelease))
-			}
-			p, err := preview.New(opts...)
-			if err != nil {
-				return fmt.Errorf("error creating preview: %w", err)
-			}
-			return p.Diff(args[0], args[1], os.Stdout)
+			log := cliLogger()
+			return runDiff(log, args, os.Stdout)
 		},
 	}
 	diffCmd.Flags().StringVar(&helmRelease, "hr", "", "Filter diff to a specific HelmRelease by name")
@@ -116,6 +117,7 @@ func main() {
 		Short: "Validate all Kustomizations build and HelmReleases render",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			log := cliLogger()
 			opts, err := buildOpts(log, args[0])
 			if err != nil {
 				return err
@@ -137,6 +139,7 @@ func main() {
 		Short: "List Flux Kustomizations",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			log := cliLogger()
 			opts, err := buildOpts(log, args[0])
 			if err != nil {
 				return err
@@ -158,6 +161,7 @@ func main() {
 		Short: "List HelmReleases",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			log := cliLogger()
 			opts, err := buildOpts(log, args[0])
 			if err != nil {
 				return err
@@ -184,6 +188,7 @@ Auto-discovers .fmp.yaml from FMP_REPO_A (base branch).
 FMP_CONFIG can point to an explicit config file (overrides auto-discovery).
 CLI flags and FMP_* env vars override the config file.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			log := cliLogger()
 			repoA := os.Getenv("FMP_REPO_A")
 			repoB := os.Getenv("FMP_REPO_B")
 			if repoA == "" || repoB == "" {
@@ -238,6 +243,7 @@ config YAML that can be used with --filter to normalize these fields.
 Use --init to generate a complete .fmp.yaml config file in the repo.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			log := cliLogger()
 			if initConfig {
 				return generateInitConfig(args[0])
 			}
@@ -270,6 +276,20 @@ Use --init to generate a complete .fmp.yaml config file in the repo.`,
 	}
 }
 
+func cliLogger() logr.Logger {
+	level := zerolog.InfoLevel
+	if verbose {
+		level = zerolog.DebugLevel
+	}
+	if quiet {
+		level = zerolog.ErrorLevel
+	}
+
+	zl := zerolog.New(os.Stderr).Level(level)
+	zl = zl.With().Caller().Timestamp().Logger().Output(zerolog.ConsoleWriter{Out: os.Stderr})
+	return zerologr.New(&zl)
+}
+
 func buildOpts(log logr.Logger, configRepoPath string) ([]preview.Opt, error) {
 	return buildOptsWithFilters(log, configRepoPath, true)
 }
@@ -279,13 +299,6 @@ func buildOptsNoFilters(log logr.Logger, configRepoPath string) ([]preview.Opt, 
 }
 
 func buildOptsWithFilters(log logr.Logger, configRepoPath string, applyFilters bool) ([]preview.Opt, error) {
-	if quiet {
-		zl := zerolog.New(os.Stderr)
-		zl = zl.With().Caller().Timestamp().Logger().Output(zerolog.ConsoleWriter{Out: os.Stderr})
-		zl = zl.Level(zerolog.ErrorLevel)
-		log = zerologr.New(&zl)
-	}
-
 	var (
 		cfg *config.Config
 		err error
