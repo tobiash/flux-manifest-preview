@@ -18,6 +18,7 @@ import (
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
 	helmcli "helm.sh/helm/v4/pkg/cli"
 	"helm.sh/helm/v4/pkg/getter"
+	"helm.sh/helm/v4/pkg/postrenderer"
 	"helm.sh/helm/v4/pkg/registry"
 	ri "helm.sh/helm/v4/pkg/release"
 	"helm.sh/helm/v4/pkg/repo/v1"
@@ -50,6 +51,7 @@ type RenderTask struct {
 	disableHooks    bool
 	includeCRDs     bool
 	isOCI           bool
+	postRenderer    postrenderer.PostRenderer
 }
 
 // NewRunner creates a new Helm runner.
@@ -186,7 +188,19 @@ func (r *Runner) renderChart(ctx context.Context, t *RenderTask) (resmap.ResMap,
 			}
 		}
 	}
+	renderedManifests, err := runPostRenderer(t.postRenderer, &manifests)
+	if err != nil {
+		return nil, fmt.Errorf("running post renderer: %w", err)
+	}
+	manifests = *renderedManifests
 	return parseManifests(manifests.Bytes(), r.logger)
+}
+
+func runPostRenderer(renderer postrenderer.PostRenderer, manifests *bytes.Buffer) (*bytes.Buffer, error) {
+	if renderer == nil {
+		return manifests, nil
+	}
+	return renderer.Run(manifests)
 }
 
 // parseManifests splits a multi-document YAML byte slice into individual

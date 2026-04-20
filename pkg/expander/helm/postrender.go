@@ -2,10 +2,20 @@ package helm
 
 import (
 	"bytes"
+	"encoding/json"
 
 	v2 "github.com/fluxcd/helm-controller/api/v2"
 	"helm.sh/helm/v4/pkg/postrenderer"
 )
+
+type helmReleasePostRender struct {
+	Kustomize *v2.Kustomize `json:"kustomize,omitempty"`
+}
+
+type helmReleasePostRenderSpec struct {
+	PostRenderers  []helmReleasePostRender `json:"postRenderers,omitempty"`
+	CommonMetadata *v2.CommonMetadata      `json:"commonMetadata,omitempty"`
+}
 
 type combinedPostRenderer struct {
 	renderers []postrenderer.PostRenderer
@@ -33,16 +43,38 @@ func (c *combinedPostRenderer) Run(renderedManifests *bytes.Buffer) (modifiedMan
 // buildPostRenderers creates the post-renderer chain for a HelmRelease.
 // Order: Kustomize patches → CommonMetadata → Origin labels
 func buildPostRenderers(hr *v2.HelmRelease) postrenderer.PostRenderer {
+	postRenderers := make([]helmReleasePostRender, len(hr.Spec.PostRenderers))
+	for i, renderer := range hr.Spec.PostRenderers {
+		postRenderers[i] = helmReleasePostRender{Kustomize: renderer.Kustomize}
+	}
+	return buildPostRenderersFromFields(hr.Name, hr.Namespace, postRenderers, hr.Spec.CommonMetadata)
+}
+
+func buildPostRenderersFromSpec(name, namespace string, spec map[string]any) (postrenderer.PostRenderer, error) {
+	parsed := helmReleasePostRenderSpec{}
+	if spec != nil {
+		data, err := json.Marshal(spec)
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(data, &parsed); err != nil {
+			return nil, err
+		}
+	}
+	return buildPostRenderersFromFields(name, namespace, parsed.PostRenderers, parsed.CommonMetadata), nil
+}
+
+func buildPostRenderersFromFields(name, namespace string, postRenderers []helmReleasePostRender, commonMetadata *v2.CommonMetadata) postrenderer.PostRenderer {
 	var combined = newCombinedPostRenderer()
-	for _, r := range hr.Spec.PostRenderers {
+	for _, r := range postRenderers {
 		if r.Kustomize != nil {
 			combined.addRenderer(newPostRendererKustomize(r.Kustomize))
 		}
 	}
-	if hr.Spec.CommonMetadata != nil {
-		combined.addRenderer(newPostRendererCommonMetadata(hr.Spec.CommonMetadata))
+	if commonMetadata != nil {
+		combined.addRenderer(newPostRendererCommonMetadata(commonMetadata))
 	}
-	combined.addRenderer(newPostRendererOriginLabels(hr.Name, hr.Namespace))
+	combined.addRenderer(newPostRendererOriginLabels(name, namespace))
 	if len(combined.renderers) == 0 {
 		return nil
 	}

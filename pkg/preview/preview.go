@@ -542,8 +542,10 @@ func (p *Preview) freshLoadRepo(path string) (*loadRepoResult, error) {
 	fresh.ensureRegistry()
 	if p.gitRepoExpander != nil {
 		fresh.expanders.Register(p.gitRepoExpander)
+		fresh.expanders.Register(fluxksexpander.NewExpanderWithResolver(p.log, p.gitRepoExpander))
+	} else {
+		fresh.expanders.Register(fluxksexpander.NewExpander(p.log))
 	}
-	fresh.expanders.Register(fluxksexpander.NewExpander(p.log))
 	if p.helmSettings != nil {
 		runner := helmexpander.NewRunner(p.helmSettings, p.log)
 		fresh.expanders.Register(helmexpander.NewExpander(runner, p.log))

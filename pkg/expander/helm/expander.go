@@ -38,12 +38,17 @@ func matchGVK(resGvk resid.Gvk, target resid.Gvk) bool {
 	return resGvk.Group == target.Group && resGvk.Kind == target.Kind
 }
 
+type chartRunner interface {
+	RenderCharts(ctx context.Context, releases []RenderTask) (resmap.ResMap, []error, error)
+	ResolveVersion(repoURL, chart, version string) (string, error)
+}
+
 // Expander implements the expander.Expander interface for Helm.
 // It is safe for concurrent use -- each call to Expand operates on isolated state.
 // The Expander tracks which releases have already been expanded to avoid
 // duplicating resources across iterative expansion loops.
 type Expander struct {
-	runner   *Runner
+	runner   chartRunner
 	logger   logr.Logger
 	scheme   *runtime.Scheme
 	expanded map[string]bool // "namespace/name" of already-expanded releases
@@ -51,7 +56,7 @@ type Expander struct {
 
 // expandState holds per-invocation state for a single Expand call.
 type expandState struct {
-	runner          *Runner
+	runner          chartRunner
 	scheme          *runtime.Scheme
 	render          *render.Render
 	releases        []unstructuredRelease
@@ -216,6 +221,10 @@ func (s *expandState) renderAllCharts(ctx context.Context) (resmap.ResMap, []err
 		}
 
 		install := nestedMap(h.spec, "install")
+		postRenderer, err := buildPostRenderersFromSpec(h.name, h.namespace, h.spec)
+		if err != nil {
+			return nil, nil, fmt.Errorf("error building post renderers for %s/%s: %w", h.namespace, h.name, err)
+		}
 		tasks = append(tasks, RenderTask{
 			values:          values,
 			chart:           chartName,
@@ -228,6 +237,7 @@ func (s *expandState) renderAllCharts(ctx context.Context) (resmap.ResMap, []err
 			disableHooks:    nestedBoolDefault(install, false, "disableHooks"),
 			createNamespace: nestedBoolDefault(install, false, "createNamespace"),
 			isOCI:           src.isOCI,
+			postRenderer:    postRenderer,
 		})
 	}
 

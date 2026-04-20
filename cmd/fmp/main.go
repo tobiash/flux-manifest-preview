@@ -29,6 +29,7 @@ var (
 	quiet          bool
 	resolveGit     bool
 	sopsDecrypt    bool
+	configFile     string
 	outputFormat   string
 	helmRelease    string
 	initConfig     bool
@@ -198,7 +199,7 @@ CLI flags and FMP_* env vars override the config file.`,
 
 			configRepo := repoA
 			if explicitConfig := os.Getenv("FMP_CONFIG"); explicitConfig != "" {
-				filtersFile = explicitConfig
+				configFile = explicitConfig
 				configRepo = ""
 			}
 
@@ -264,6 +265,7 @@ Use --init to generate a complete .fmp.yaml config file in the repo.`,
 			}
 			os.Exit(1)
 		}
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
@@ -284,9 +286,20 @@ func buildOptsWithFilters(log logr.Logger, configRepoPath string, applyFilters b
 		log = zerologr.New(&zl)
 	}
 
-	cfg, err := config.LoadConfig(configRepoPath)
-	if err != nil {
-		return nil, fmt.Errorf("loading config: %w", err)
+	var (
+		cfg *config.Config
+		err error
+	)
+	if configFile != "" {
+		cfg, err = config.LoadConfigFromPath(configFile)
+		if err != nil {
+			return nil, fmt.Errorf("loading config %s: %w", configFile, err)
+		}
+	} else {
+		cfg, err = config.LoadConfig(configRepoPath)
+		if err != nil {
+			return nil, fmt.Errorf("loading config: %w", err)
+		}
 	}
 
 	paths := kustomizations
