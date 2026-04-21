@@ -277,7 +277,7 @@ Use --init to generate a complete .fmp.yaml config file in the repo.`,
 }
 
 func cliLogger() logr.Logger {
-	level := zerolog.InfoLevel
+	level := zerolog.WarnLevel
 	if verbose {
 		level = zerolog.DebugLevel
 	}

@@ -3,6 +3,7 @@ package helm
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/go-logr/logr"
@@ -43,12 +44,17 @@ type chartRunner interface {
 	ResolveVersion(repoURL, chart, version string) (string, error)
 }
 
+type chartSourceResolver interface {
+	ResolvePath(namespace, name string) (string, bool)
+}
+
 // Expander implements the expander.Expander interface for Helm.
 // It is safe for concurrent use -- each call to Expand operates on isolated state.
 // The Expander tracks which releases have already been expanded to avoid
 // duplicating resources across iterative expansion loops.
 type Expander struct {
 	runner   chartRunner
+	resolver chartSourceResolver
 	logger   logr.Logger
 	scheme   *runtime.Scheme
 	expanded map[string]bool // "namespace/name" of already-expanded releases
@@ -57,6 +63,7 @@ type Expander struct {
 // expandState holds per-invocation state for a single Expand call.
 type expandState struct {
 	runner          chartRunner
+	resolver        chartSourceResolver
 	scheme          *runtime.Scheme
 	render          *render.Render
 	releases        []unstructuredRelease
@@ -82,13 +89,14 @@ type unstructuredRepository struct {
 }
 
 // NewExpander creates a new Helm expander.
-func NewExpander(runner *Runner, log logr.Logger) *Expander {
+func NewExpander(runner *Runner, resolver chartSourceResolver, log logr.Logger) *Expander {
 	sch := runtime.NewScheme()
 	_ = scheme.AddToScheme(sch)
 	return &Expander{
-		runner: runner,
-		logger: log,
-		scheme: sch,
+		runner:   runner,
+		resolver: resolver,
+		logger:   log,
+		scheme:   sch,
 	}
 }
 
@@ -101,10 +109,11 @@ func (e *Expander) Expand(ctx context.Context, r *render.Render) (*expander.Expa
 	}
 
 	s := &expandState{
-		runner: e.runner,
-		scheme: e.scheme,
-		render: r,
-		logger: e.logger,
+		runner:   e.runner,
+		resolver: e.resolver,
+		scheme:   e.scheme,
+		render:   r,
+		logger:   e.logger,
 	}
 
 	// Parse resources from the render
@@ -197,7 +206,7 @@ func (s *expandState) renderAllCharts(ctx context.Context) (resmap.ResMap, []err
 		}
 		src, err := s.findChartUrl(h)
 		if err != nil {
-			s.logger.Info("skipping HelmRelease, cannot resolve chart source", "name", h.name, "namespace", h.namespace, "error", err)
+			s.logger.V(1).Info("skipping HelmRelease, cannot resolve chart source", "name", h.name, "namespace", h.namespace, "error", err)
 			skipErrs = append(skipErrs, fmt.Errorf("HelmRelease %s/%s: %w", h.namespace, h.name, err))
 			continue
 		}
@@ -205,10 +214,12 @@ func (s *expandState) renderAllCharts(ctx context.Context) (resmap.ResMap, []err
 		chartName := nestedString(h.spec, "chart", "spec", "chart")
 		chartVersion := nestedString(h.spec, "chart", "spec", "version")
 
-		if resolved, err := s.runner.ResolveVersion(src.url, chartName, chartVersion); err == nil {
-			chartVersion = resolved
-		} else {
-			s.logger.Info("version range resolution failed, using raw version", "chart", chartName, "version", chartVersion, "error", err)
+		if src.localPath == "" {
+			if resolved, err := s.runner.ResolveVersion(src.url, chartName, chartVersion); err == nil {
+				chartVersion = resolved
+			} else {
+				s.logger.V(1).Info("version range resolution failed, using raw version", "chart", chartName, "version", chartVersion, "error", err)
+			}
 		}
 		releaseName := nestedString(h.spec, "releaseName")
 		if releaseName == "" {
@@ -230,6 +241,7 @@ func (s *expandState) renderAllCharts(ctx context.Context) (resmap.ResMap, []err
 			chart:           chartName,
 			version:         chartVersion,
 			repo:            repo.Entry{URL: src.url, Name: fmt.Sprintf("%s-%s", h.namespace, h.name)},
+			localChartPath:  src.localPath,
 			releaseName:     releaseName,
 			namespace:       namespace,
 			skipCRDs:        nestedBoolDefault(install, false, "skipCRDs"),
@@ -284,7 +296,7 @@ func (s *expandState) composeValues(hr unstructuredRelease) (chartcommon.Values,
 				return nil, fmt.Errorf("error loading configmap %s: %w", namespacedName, err)
 			}
 			if !found {
-				logger.Info("configmap not found, ignoring values", "configmap", namespacedName)
+				logger.V(1).Info("configmap not found, ignoring values", "configmap", namespacedName)
 				continue
 			}
 			if data, ok := cm.Data[valuesKey]; !ok {
@@ -299,7 +311,7 @@ func (s *expandState) composeValues(hr unstructuredRelease) (chartcommon.Values,
 				return nil, fmt.Errorf("error loading secret %s: %w", namespacedName, err)
 			}
 			if !found {
-				logger.Info("secret not found, ignoring values", "secret", namespacedName)
+				logger.V(1).Info("secret not found, ignoring values", "secret", namespacedName)
 				continue
 			}
 			if data, ok := secret.Data[valuesKey]; !ok {
@@ -349,8 +361,9 @@ func (s *expandState) composeValues(hr unstructuredRelease) (chartcommon.Values,
 
 // chartSource holds the resolved chart location and whether it's an OCI reference.
 type chartSource struct {
-	url   string
-	isOCI bool
+	url       string
+	isOCI     bool
+	localPath string
 }
 
 func (s *expandState) findChartUrl(source unstructuredRelease) (chartSource, error) {
@@ -379,6 +392,19 @@ func (s *expandState) findChartUrl(source unstructuredRelease) (chartSource, err
 				return chartSource{url: oci.url, isOCI: true}, nil
 			}
 		}
+	case "GitRepository":
+		if s.resolver == nil {
+			return chartSource{}, fmt.Errorf("GitRepository source requires --resolve-git")
+		}
+		baseDir, ok := s.resolver.ResolvePath(namespace, name)
+		if !ok {
+			return chartSource{}, fmt.Errorf("unable to resolve GitRepository %s/%s", namespace, name)
+		}
+		chartPath := strings.TrimPrefix(nestedString(source.spec, "chart", "spec", "chart"), "./")
+		if chartPath == "" {
+			return chartSource{}, fmt.Errorf("HelmRelease %s/%s has no chart.spec.chart path", source.namespace, source.name)
+		}
+		return chartSource{localPath: filepath.Join(baseDir, chartPath)}, nil
 	default:
 		return chartSource{}, fmt.Errorf("unsupported source kind '%s'", kind)
 	}

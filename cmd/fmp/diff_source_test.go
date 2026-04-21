@@ -132,6 +132,57 @@ func TestRunDiff_NoArgsComparesHeadToWorktree(t *testing.T) {
 	}
 }
 
+func TestRunDiff_NoArgsResolveGitReusesCurrentRepo(t *testing.T) {
+	resetGlobals()
+	resolveGit = true
+	repo := initGitRepo(t)
+	gitRun(t, repo, "remote", "add", "origin", "https://github.com/tobiash/kube.git")
+	writeFile(t, repo, ".fmp.yaml", "paths:\n  - .\nsort: true\n")
+	writeFile(t, repo, "sources.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  url: ssh://git@github.com/tobiash/kube.git
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: app
+  namespace: flux-system
+spec:
+  path: ./app
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+`)
+	writeFile(t, repo, "app/configmap.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test\ndata:\n  value: old\n")
+	gitRun(t, repo, "add", ".")
+	gitCommit(t, repo, "initial state")
+	writeFile(t, repo, "app/configmap.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test\ndata:\n  value: new\n")
+
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(origWD)
+	}()
+	if err := os.Chdir(repo); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := runDiff(logr.Discard(), nil, &out); err != nil {
+		t.Fatalf("runDiff() error = %v", err)
+	}
+	result := out.String()
+	if !strings.Contains(result, "value: old") || !strings.Contains(result, "value: new") {
+		t.Fatalf("expected diff to mention old and new values, got:\n%s", result)
+	}
+}
+
 func initGitRepo(t *testing.T) string {
 	t.Helper()
 	repo := t.TempDir()

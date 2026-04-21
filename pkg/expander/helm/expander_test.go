@@ -118,8 +118,55 @@ metadata:
 	}
 }
 
+func TestRenderAllCharts_ResolvesGitRepositoryChartSource(t *testing.T) {
+	runner := &stubChartRunner{}
+	s := &expandState{
+		runner:   runner,
+		resolver: stubChartSourceResolver{"flux-system/podinfo": "/tmp/source"},
+		render:   render.NewDefaultRender(logr.Discard()),
+		logger:   logr.Discard(),
+		releases: []unstructuredRelease{{
+			name:      "podinfo",
+			namespace: "default",
+			spec: map[string]any{
+				"chart": map[string]any{
+					"spec": map[string]any{
+						"chart": "./charts/podinfo",
+						"sourceRef": map[string]any{
+							"kind":      "GitRepository",
+							"name":      "podinfo",
+							"namespace": "flux-system",
+						},
+					},
+				},
+			},
+		}},
+	}
+
+	_, errs, err := s.renderAllCharts(context.Background())
+	if err != nil {
+		t.Fatalf("renderAllCharts() error = %v", err)
+	}
+	if len(errs) != 0 {
+		t.Fatalf("renderAllCharts() returned unexpected warnings: %v", errs)
+	}
+	if len(runner.tasks) != 1 {
+		t.Fatalf("expected one render task, got %d", len(runner.tasks))
+	}
+	if got, want := runner.tasks[0].localChartPath, "/tmp/source/charts/podinfo"; got != want {
+		t.Fatalf("localChartPath = %q, want %q", got, want)
+	}
+}
+
 type stubChartRunner struct {
 	tasks []RenderTask
+}
+
+type stubChartSourceResolver map[string]string
+
+func (s stubChartSourceResolver) ResolvePath(namespace, name string) (string, bool) {
+	path, ok := s[namespace+"/"+name]
+	return path, ok
 }
 
 func (s *stubChartRunner) ResolveVersion(_, _, version string) (string, error) {

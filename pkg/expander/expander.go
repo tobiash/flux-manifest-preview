@@ -20,6 +20,8 @@ type DiscoveredPath struct {
 	// Namespace overrides the namespace for all namespace-scoped resources
 	// rendered from this path (e.g. Flux Kustomization spec.targetNamespace).
 	Namespace string
+	// Producer describes the Flux object or path that caused this path to be rendered.
+	Producer string
 }
 
 // ExpandResult holds the output of an expander.

@@ -20,9 +20,8 @@ import (
 	"bytes"
 	"fmt"
 
+	"github.com/go-logr/logr"
 	"sigs.k8s.io/kustomize/api/builtins"
-	"sigs.k8s.io/kustomize/api/provider"
-	"sigs.k8s.io/kustomize/api/resmap"
 	kustypes "sigs.k8s.io/kustomize/api/types"
 
 	v2 "github.com/fluxcd/helm-controller/api/v2"
@@ -39,10 +38,7 @@ func newPostRendererOriginLabels(name, namespace string) *postRendererOriginLabe
 }
 
 func (k *postRendererOriginLabels) Run(renderedManifests *bytes.Buffer) (modifiedManifests *bytes.Buffer, err error) {
-	resFactory := provider.NewDefaultDepProvider().GetResourceFactory()
-	resMapFactory := resmap.NewFactory(resFactory)
-
-	resMap, err := resMapFactory.NewResMapFromBytes(renderedManifests.Bytes())
+	resMap, err := parseManifests(renderedManifests.Bytes(), logr.Discard())
 	if err != nil {
 		return nil, err
 	}
@@ -86,11 +82,7 @@ func (p *postRendererCommonMetadata) Run(renderedManifests *bytes.Buffer) (modif
 	if p.labels == nil && p.annotations == nil {
 		return renderedManifests, nil
 	}
-
-	resFactory := provider.NewDefaultDepProvider().GetResourceFactory()
-	resMapFactory := resmap.NewFactory(resFactory)
-
-	resMap, err := resMapFactory.NewResMapFromBytes(renderedManifests.Bytes())
+	resMap, err := parseManifests(renderedManifests.Bytes(), logr.Discard())
 	if err != nil {
 		return nil, err
 	}

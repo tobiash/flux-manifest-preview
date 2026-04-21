@@ -66,13 +66,15 @@ func (e *Expander) Expand(_ context.Context, r *render.Render) (*expander.Expand
 			continue
 		}
 
-		dp := expander.DiscoveredPath{Path: path}
+		dp := expander.DiscoveredPath{
+			Path:     path,
+			Producer: fmt.Sprintf("Kustomization %s/%s", res.GetNamespace(), res.GetName()),
+		}
 
 		// Extract targetNamespace from spec.
 		if tn := extractTargetNamespace(res); tn != "" {
 			dp.Namespace = tn
 		}
-
 
 		// Resolve sourceRef if a resolver is available.
 		if e.resolver != nil {
@@ -88,7 +90,7 @@ func (e *Expander) Expand(_ context.Context, r *render.Render) (*expander.Expand
 			}
 		}
 
-		e.log.Info("discovered Flux Kustomization path",
+		e.log.V(1).Info("discovered Flux Kustomization path",
 			"path", dp.Path, "baseDir", dp.BaseDir, "name", res.GetName(), "namespace", res.GetNamespace())
 		paths = append(paths, dp)
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/spf13/cobra"
 
+	gitrepoexpander "github.com/tobiash/flux-manifest-preview/pkg/expander/gitrepo"
 	"github.com/tobiash/flux-manifest-preview/pkg/preview"
 )
 
@@ -313,6 +314,10 @@ func materializeRevision(ctx context.Context, repoRoot, rev string) (string, fun
 	if err := cmd.Wait(); err != nil {
 		cleanup()
 		return "", nil, fmt.Errorf("git archive %s: %s: %w", rev, strings.TrimSpace(stderr.String()), err)
+	}
+	if err := gitrepoexpander.WriteSourceRepoURLs(tmpDir, repoRoot); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("writing source repo metadata for %s: %w", rev, err)
 	}
 	return tmpDir, cleanup, nil
 }

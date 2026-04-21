@@ -32,7 +32,7 @@ type Preview struct {
 	helmReleaseName string
 	sopsDecrypt     bool
 	filters         *filter.FilterConfig
-	expanders       *expander.Registry
+	fluxKSEnabled   bool
 	gitRepoExpander *gitrepoexpander.Expander
 	helmSettings    *helmcli.EnvSettings
 	log             logr.Logger
@@ -66,11 +66,12 @@ func (p *Preview) loadRepo(path string) (*loadRepoResult, error) {
 	r := render.NewDefaultRender(log)
 	fSys := filesys.MakeFsOnDisk()
 	var collectedErrors []error
+	activeExpanders := p.expandersForSource(path)
 
 	// Seed the queue with user-specified paths.
 	queue := make([]expander.DiscoveredPath, len(p.paths))
 	for i, p := range p.paths {
-		queue[i] = expander.DiscoveredPath{Path: p}
+		queue[i] = expander.DiscoveredPath{Path: p, Producer: fmt.Sprintf("path %s", p)}
 	}
 
 	// userPaths tracks which paths were explicitly requested by the user.
@@ -105,36 +106,41 @@ func (p *Preview) loadRepo(path string) (*loadRepoResult, error) {
 				if userPaths[dp.Path] {
 					return nil, fmt.Errorf("path %q does not exist", dp.Path)
 				}
-				log.Info("skipping non-existent path", "path", dp.Path)
+				log.V(1).Info("skipping non-existent path", "path", dp.Path)
 				continue
 			}
 
-			log.Info("rendering path", "path", dp.Path, "baseDir", dp.BaseDir)
+			log.V(1).Info("rendering path", "path", dp.Path, "baseDir", dp.BaseDir)
 			count := r.Size()
+			producer := dp.Producer
+			if producer == "" {
+				producer = fmt.Sprintf("path %s", dp.Path)
+			}
 			if p.recursive {
-				if err := r.AddPaths(fSys, full); err != nil {
+				if err := r.AddPathsWithProducer(fSys, full, producer); err != nil {
 					return nil, fmt.Errorf("failed to add path %s: %w", full, err)
 				}
 			} else {
-				if err := r.AddPath(fSys, full); err != nil {
+				if err := r.AddPathWithProducer(fSys, full, producer); err != nil {
 					return nil, fmt.Errorf("failed to add path %s: %w", full, err)
 				}
 			}
 			if dp.Namespace != "" {
 				r.ApplyNamespaceToNew(count, dp.Namespace)
 			}
+			r.MarkProvenanceToNew(count, producer)
 		}
 
 		// Run expanders to discover new paths and expand resources.
 		queue = nil
-		if p.expanders != nil {
-			result, err := p.expanders.Expand(p.ctx, r)
+		if activeExpanders != nil {
+			result, err := activeExpanders.Expand(p.ctx, r)
 			if err != nil {
 				return nil, fmt.Errorf("failed to expand: %w", err)
 			}
 			collectedErrors = append(collectedErrors, result.Errors...)
 			if result.Resources != nil {
-				if err := r.AppendAll(result.Resources); err != nil {
+				if err := r.AbsorbAll(result.Resources); err != nil {
 					return nil, fmt.Errorf("failed to absorb expanded resources: %w", err)
 				}
 			}
@@ -165,6 +171,7 @@ func (p *Preview) loadRepo(path string) (*loadRepoResult, error) {
 			return nil, fmt.Errorf("sops decryption failed: %w", err)
 		}
 	}
+	collectedErrors = append(collectedErrors, r.Warnings()...)
 
 	return &loadRepoResult{render: r, errors: collectedErrors}, nil
 }
@@ -334,9 +341,6 @@ func WithFilterConfig(fc *filter.FilterConfig) Opt {
 func WithHelm(helmsettings *helmcli.EnvSettings) Opt {
 	return func(p *Preview) error {
 		p.helmSettings = helmsettings
-		p.ensureRegistry()
-		runner := helmexpander.NewRunner(helmsettings, p.log)
-		p.expanders.Register(helmexpander.NewExpander(runner, p.log))
 		return nil
 	}
 }
@@ -346,12 +350,7 @@ func WithHelm(helmsettings *helmcli.EnvSettings) Opt {
 // If a GitRepository expander is registered, it is used to resolve source paths.
 func WithFluxKS() Opt {
 	return func(p *Preview) error {
-		p.ensureRegistry()
-		if p.gitRepoExpander != nil {
-			p.expanders.Register(fluxksexpander.NewExpanderWithResolver(p.log, p.gitRepoExpander))
-		} else {
-			p.expanders.Register(fluxksexpander.NewExpander(p.log))
-		}
+		p.fluxKSEnabled = true
 		return nil
 	}
 }
@@ -360,22 +359,37 @@ func WithFluxKS() Opt {
 // repos to temp directories. Must be called before WithFluxKS.
 func WithGitRepo() Opt {
 	return func(p *Preview) error {
-		p.ensureRegistry()
 		exp, err := gitrepoexpander.NewExpander(p.log)
 		if err != nil {
 			return fmt.Errorf("creating git repo expander: %w", err)
 		}
 		p.gitRepoExpander = exp
-		p.expanders.Register(exp)
 		return nil
 	}
 }
 
-// ensureRegistry lazily initializes the expander registry.
-func (p *Preview) ensureRegistry() {
-	if p.expanders == nil {
-		p.expanders = expander.NewRegistry(p.log)
+func (p *Preview) expandersForSource(path string) *expander.Registry {
+	if !p.fluxKSEnabled && p.gitRepoExpander == nil && p.helmSettings == nil {
+		return nil
 	}
+	registry := expander.NewRegistry(p.log)
+	var resolver *gitrepoexpander.Expander
+	if p.gitRepoExpander != nil {
+		resolver = p.gitRepoExpander.WithSourceRoot(path)
+		registry.Register(resolver)
+	}
+	if p.fluxKSEnabled {
+		if resolver != nil {
+			registry.Register(fluxksexpander.NewExpanderWithResolver(p.log, resolver))
+		} else {
+			registry.Register(fluxksexpander.NewExpander(p.log))
+		}
+	}
+	if p.helmSettings != nil {
+		runner := helmexpander.NewRunner(p.helmSettings, p.log)
+		registry.Register(helmexpander.NewExpander(runner, resolver, p.log))
+	}
+	return registry
 }
 
 // WithPaths configures the paths to render and whether to recurse into subdirectories.
@@ -529,26 +543,17 @@ func (p *Preview) GenerateInitConfig(path, destPath string) error {
 // cached expander state (e.g. the Helm expander's expanded-release map).
 func (p *Preview) freshLoadRepo(path string) (*loadRepoResult, error) {
 	fresh := &Preview{
-		paths:       p.paths,
-		recursive:   p.recursive,
-		sortOutput:  p.sortOutput,
-		excludeCRDs: p.excludeCRDs,
-		sopsDecrypt: p.sopsDecrypt,
-		filters:     p.filters,
-		log:         p.log,
-		ctx:         p.ctx,
-	}
-
-	fresh.ensureRegistry()
-	if p.gitRepoExpander != nil {
-		fresh.expanders.Register(p.gitRepoExpander)
-		fresh.expanders.Register(fluxksexpander.NewExpanderWithResolver(p.log, p.gitRepoExpander))
-	} else {
-		fresh.expanders.Register(fluxksexpander.NewExpander(p.log))
-	}
-	if p.helmSettings != nil {
-		runner := helmexpander.NewRunner(p.helmSettings, p.log)
-		fresh.expanders.Register(helmexpander.NewExpander(runner, p.log))
+		paths:           p.paths,
+		recursive:       p.recursive,
+		sortOutput:      p.sortOutput,
+		excludeCRDs:     p.excludeCRDs,
+		sopsDecrypt:     p.sopsDecrypt,
+		filters:         p.filters,
+		fluxKSEnabled:   p.fluxKSEnabled,
+		log:             p.log,
+		ctx:             p.ctx,
+		gitRepoExpander: p.gitRepoExpander,
+		helmSettings:    p.helmSettings,
 	}
 
 	return fresh.loadRepo(path)

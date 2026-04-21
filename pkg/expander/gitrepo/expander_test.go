@@ -1,0 +1,141 @@
+package gitrepo
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/go-logr/logr"
+	"github.com/tobiash/flux-manifest-preview/pkg/render"
+	"sigs.k8s.io/kustomize/api/hasher"
+	"sigs.k8s.io/kustomize/api/resmap"
+	"sigs.k8s.io/kustomize/api/resource"
+)
+
+func TestExpand_UsesCurrentRepoForMatchingRemote(t *testing.T) {
+	repo := t.TempDir()
+	gitRun(t, repo, "init")
+	gitRun(t, repo, "remote", "add", "origin", "https://github.com/tobiash/kube.git")
+
+	exp, err := NewExpander(logr.Discard())
+	if err != nil {
+		t.Fatalf("NewExpander() error = %v", err)
+	}
+	defer exp.Cleanup()
+
+	r := newRenderFromYAML(t, `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  url: ssh://git@github.com/tobiash/kube.git
+`)
+
+	if _, err := exp.WithSourceRoot(repo).Expand(nil, r); err != nil {
+		t.Fatalf("Expand() error = %v", err)
+	}
+
+	path, ok := exp.WithSourceRoot(repo).ResolvePath("flux-system", "flux-system")
+	if ok {
+		t.Fatalf("unexpected resolve path from fresh scoped expander: %q", path)
+	}
+
+	scoped := exp.WithSourceRoot(repo)
+	if _, err := scoped.Expand(nil, r); err != nil {
+		t.Fatalf("Expand() error = %v", err)
+	}
+	path, ok = scoped.ResolvePath("flux-system", "flux-system")
+	if !ok {
+		t.Fatal("expected current repo to resolve without cloning")
+	}
+	if path != repo {
+		t.Fatalf("resolved path = %q, want %q", path, repo)
+	}
+}
+
+func TestExpand_ConcurrentSharedCloneUsesSingleClone(t *testing.T) {
+	exp, err := NewExpander(logr.Discard())
+	if err != nil {
+		t.Fatalf("NewExpander() error = %v", err)
+	}
+	defer exp.Cleanup()
+
+	r := newRenderFromYAML(t, `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: local-path-provisioner
+  namespace: flux-system
+spec:
+  url: https://github.com/rancher/local-path-provisioner
+`)
+
+	originalClone := gitCloneFunc
+	defer func() { gitCloneFunc = originalClone }()
+	var cloneCalls atomic.Int32
+	gitCloneFunc = func(_ string, dest string, _ string) error {
+		cloneCalls.Add(1)
+		if err := os.MkdirAll(dest, 0o755); err != nil {
+			return err
+		}
+		time.Sleep(25 * time.Millisecond)
+		return os.WriteFile(filepath.Join(dest, "README"), []byte("ok\n"), 0o644)
+	}
+
+	scopedA := exp.WithSourceRoot(t.TempDir())
+	scopedB := exp.WithSourceRoot(t.TempDir())
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 2)
+	for _, scoped := range []*Expander{scopedA, scopedB} {
+		wg.Add(1)
+		go func(scoped *Expander) {
+			defer wg.Done()
+			_, err := scoped.Expand(nil, r)
+			errCh <- err
+		}(scoped)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatalf("Expand() error = %v", err)
+		}
+	}
+
+	if got := cloneCalls.Load(); got != 1 {
+		t.Fatalf("gitCloneFunc called %d times, want 1", got)
+	}
+	if _, ok := scopedA.ResolvePath("flux-system", "local-path-provisioner"); !ok {
+		t.Fatal("expected first scoped expander to resolve shared clone")
+	}
+	if _, ok := scopedB.ResolvePath("flux-system", "local-path-provisioner"); !ok {
+		t.Fatal("expected second scoped expander to resolve shared clone")
+	}
+}
+
+func newRenderFromYAML(t *testing.T, yaml string) *render.Render {
+	t.Helper()
+	r := render.NewDefaultRender(logr.Discard())
+	factory := resmap.NewFactory(resource.NewFactory(&hasher.Hasher{}))
+	rm, err := factory.NewResMapFromBytes([]byte(yaml))
+	if err != nil {
+		t.Fatalf("NewResMapFromBytes() error = %v", err)
+	}
+	if err := r.AbsorbAll(rm); err != nil {
+		t.Fatalf("AbsorbAll() error = %v", err)
+	}
+	return r
+}
+
+func gitRun(t *testing.T, repo string, args ...string) {
+	t.Helper()
+	cmdArgs := append([]string{"-C", repo}, args...)
+	if out, err := exec.Command("git", cmdArgs...).CombinedOutput(); err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, string(out))
+	}
+}

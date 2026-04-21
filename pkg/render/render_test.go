@@ -1,6 +1,7 @@
 package render
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/go-logr/logr"
@@ -83,6 +84,51 @@ func TestFilterCRDs_EmptyRender(t *testing.T) {
 	r.FilterCRDs()
 	if r.Size() != 0 {
 		t.Errorf("expected empty render to stay empty, got %d resources", r.Size())
+	}
+}
+
+func TestAbsorbResMap_ReplacesDuplicateResource(t *testing.T) {
+	r := NewDefaultRender(logr.Discard())
+	factory := resmap.NewFactory(resource.NewFactory(&hasher.Hasher{}))
+	first, err := factory.NewResMapFromBytes([]byte(`apiVersion: v1
+kind: Namespace
+metadata:
+  name: csi-addons-system
+  labels:
+    source: local
+`))
+	if err != nil {
+		t.Fatalf("NewResMapFromBytes(first) error = %v", err)
+	}
+	second, err := factory.NewResMapFromBytes([]byte(`apiVersion: v1
+kind: Namespace
+metadata:
+  name: csi-addons-system
+  labels:
+    source: remote
+`))
+	if err != nil {
+		t.Fatalf("NewResMapFromBytes(second) error = %v", err)
+	}
+	if err := r.absorbResMap("first", "Kustomization flux-system/first", first); err != nil {
+		t.Fatalf("absorbResMap(first) error = %v", err)
+	}
+	if err := r.absorbResMap("second", "Kustomization flux-system/second", second); err != nil {
+		t.Fatalf("absorbResMap(second) error = %v", err)
+	}
+	resources := r.Resources()
+	if len(resources) != 1 {
+		t.Fatalf("expected 1 resource, got %d", len(resources))
+	}
+	if resources[0].GetLabels()["source"] != "remote" {
+		t.Fatalf("expected duplicate resource replacement, got labels %v", resources[0].GetLabels())
+	}
+	warnings := r.Warnings()
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %d", len(warnings))
+	}
+	if got := warnings[0].Error(); got == "" || !strings.Contains(got, "Kustomization flux-system/second") || !strings.Contains(got, "Kustomization flux-system/first") {
+		t.Fatalf("expected duplicate resource warning, got %q", got)
 	}
 }
 

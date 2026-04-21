@@ -15,6 +15,7 @@ import (
 	"github.com/go-logr/logr"
 	"helm.sh/helm/v4/pkg/action"
 	chartcommon "helm.sh/helm/v4/pkg/chart/common"
+	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
 	helmcli "helm.sh/helm/v4/pkg/cli"
 	"helm.sh/helm/v4/pkg/getter"
@@ -43,6 +44,7 @@ type RenderTask struct {
 	chart           string
 	version         string
 	repo            repo.Entry
+	localChartPath  string
 	releaseName     string
 	namespace       string
 	createNamespace bool
@@ -90,11 +92,10 @@ func (r *Runner) RenderCharts(ctx context.Context, releases []RenderTask) (resma
 	var errs []error
 	for _, chartResult := range results {
 		if chartResult.err != nil {
-			r.logger.Info("skipping chart render", "chart", chartResult.task.chart, "namespace", chartResult.task.namespace, "error", chartResult.err)
+			r.logger.V(1).Info("skipping chart render", "chart", chartResult.task.chart, "namespace", chartResult.task.namespace, "error", chartResult.err)
 			errs = append(errs, fmt.Errorf("HelmRelease %s/%s: %w", chartResult.task.namespace, chartResult.task.chart, chartResult.err))
 			continue
 		}
-		ns := chartResult.task.namespace
 		for _, res := range chartResult.resources.Resources() {
 			labels := res.GetLabels()
 			if labels == nil {
@@ -103,10 +104,6 @@ func (r *Runner) RenderCharts(ctx context.Context, releases []RenderTask) (resma
 			labels["helm.toolkit.fluxcd.io/name"] = chartResult.task.releaseName
 			labels["helm.toolkit.fluxcd.io/namespace"] = chartResult.task.namespace
 			res.SetLabels(labels)
-
-			if !res.GetGvk().IsClusterScoped() && res.GetNamespace() == "" {
-				res.SetNamespace(ns)
-			}
 		}
 
 		if err := absorbResMap(res, chartResult.resources, r.logger); err != nil {
@@ -122,6 +119,7 @@ func (r *Runner) renderChart(ctx context.Context, t *RenderTask) (resmap.ResMap,
 
 	install := action.NewInstall(cfg)
 	install.DryRunStrategy = action.DryRunClient
+	install.Namespace = t.namespace
 	install.CreateNamespace = t.createNamespace
 	install.ReleaseName = t.releaseName
 	install.SkipCRDs = t.skipCRDs
@@ -129,8 +127,18 @@ func (r *Runner) renderChart(ctx context.Context, t *RenderTask) (resmap.ResMap,
 	install.DisableHooks = t.disableHooks
 	install.IncludeCRDs = t.includeCRDs
 
-	var chartRef string
-	if t.isOCI {
+	var (
+		chartRef string
+		chart    *chart.Chart
+	)
+	if t.localChartPath != "" {
+		loaded, err := loader.Load(t.localChartPath)
+		if err != nil {
+			return nil, fmt.Errorf("loading local chart %s: %w", t.localChartPath, err)
+		}
+		chart = loaded
+		r.logger.V(1).Info("loaded local chart", "chart", t.chart, "path", t.localChartPath)
+	} else if t.isOCI {
 		// For OCI charts, construct the full reference, skip repo index, and set up a registry client.
 		chartRef = strings.TrimSuffix(t.repo.URL, "/") + "/" + t.chart
 		install.ChartPathOptions.Version = t.version
@@ -154,17 +162,17 @@ func (r *Runner) renderChart(ctx context.Context, t *RenderTask) (resmap.ResMap,
 		install.ChartPathOptions.KeyFile = t.repo.KeyFile
 		chartRef = t.chart
 	}
-
-	r.settings.Debug = true
-
-	cp, err := install.ChartPathOptions.LocateChart(chartRef, r.settings)
-	if err != nil {
-		return nil, fmt.Errorf("error locating chart: %w", err)
-	}
-	r.logger.Info("loaded chart from repo", "chart", t.chart, "repo", t.repo.Name, "url", t.repo.URL, "path", cp)
-	chart, err := loader.Load(cp)
-	if err != nil {
-		return nil, err
+	if chart == nil {
+		cp, err := install.ChartPathOptions.LocateChart(chartRef, r.settings)
+		if err != nil {
+			return nil, fmt.Errorf("error locating chart: %w", err)
+		}
+		r.logger.V(1).Info("loaded chart from repo", "chart", t.chart, "repo", t.repo.Name, "url", t.repo.URL, "path", cp)
+		loaded, err := loader.Load(cp)
+		if err != nil {
+			return nil, err
+		}
+		chart = loaded
 	}
 	rel, err := install.RunWithContext(ctx, chart, t.values)
 	if err != nil {
