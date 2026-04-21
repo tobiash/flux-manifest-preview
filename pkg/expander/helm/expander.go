@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-logr/logr"
 	"github.com/tobiash/flux-manifest-preview/pkg/expander"
 	"github.com/tobiash/flux-manifest-preview/pkg/render"
@@ -31,10 +33,9 @@ var (
 )
 
 // matchGVK reports true if the resource's GVK matches the target by group and kind.
-// Version is ignored because Flux resources exist in multiple API versions
-// (e.g. v2beta1, v2, v1beta2, v1) and conversion between them requires a
-// running API server with conversion webhooks. We work with unstructured
-// data directly instead.
+// Version is ignored because Flux resources exist in multiple API versions,
+// but the fields we read are compatible enough to decode into the current
+// public API structs directly.
 func matchGVK(resGvk resid.Gvk, target resid.Gvk) bool {
 	return resGvk.Group == target.Group && resGvk.Kind == target.Kind
 }
@@ -65,26 +66,10 @@ type expandState struct {
 	resolver        chartSourceResolver
 	scheme          *runtime.Scheme
 	render          *render.Render
-	releases        []unstructuredRelease
-	repositories    []unstructuredRepository
-	ociRepositories []unstructuredRepository
+	releases        []*helmv2.HelmRelease
+	repositories    []*sourcev1.HelmRepository
+	ociRepositories []*sourcev1.OCIRepository
 	logger          logr.Logger
-}
-
-// unstructuredRelease holds the fields we need from a HelmRelease,
-// extracted from unstructured data to avoid API version conversion issues.
-type unstructuredRelease struct {
-	name      string
-	namespace string
-	spec      map[string]any
-}
-
-// unstructuredRepository holds the fields we need from a HelmRepository or OCIRepository.
-type unstructuredRepository struct {
-	name      string
-	namespace string
-	url       string
-	isOCI     bool
 }
 
 // NewExpander creates a new Helm expander.
@@ -125,27 +110,27 @@ func (e *Expander) Expand(ctx context.Context, r *render.Render) (*expander.Expa
 			if err != nil {
 				return nil, fmt.Errorf("error parsing HelmRelease: %w", err)
 			}
-			key := release.namespace + "/" + release.name
+			key := release.Namespace + "/" + release.Name
 			if e.expanded[key] {
-				s.logger.V(1).Info("skipping already-expanded HelmRelease", "name", release.name, "namespace", release.namespace)
+				s.logger.V(1).Info("skipping already-expanded HelmRelease", "name", release.Name, "namespace", release.Namespace)
 				continue
 			}
 			e.expanded[key] = true
-			s.logger.V(1).Info("found helm release", "name", release.name, "namespace", release.namespace)
+			s.logger.V(1).Info("found helm release", "name", release.Name, "namespace", release.Namespace)
 			s.releases = append(s.releases, release)
 		} else if matchGVK(gvk, helmRepoGVK) {
 			repo, err := s.parseRepository(res)
 			if err != nil {
 				return nil, fmt.Errorf("error parsing HelmRepository: %w", err)
 			}
-			s.logger.V(1).Info("found helm repository", "name", repo.name, "namespace", repo.namespace)
+			s.logger.V(1).Info("found helm repository", "name", repo.Name, "namespace", repo.Namespace)
 			s.repositories = append(s.repositories, repo)
 		} else if matchGVK(gvk, ociRepoGVK) {
-			repo, err := s.parseRepository(res)
+			repo, err := s.parseOCIRepository(res)
 			if err != nil {
 				return nil, fmt.Errorf("error parsing OCIRepository: %w", err)
 			}
-			s.logger.V(1).Info("found oci repository", "name", repo.name, "namespace", repo.namespace)
+			s.logger.V(1).Info("found oci repository", "name", repo.Name, "namespace", repo.Namespace)
 			s.ociRepositories = append(s.ociRepositories, repo)
 		}
 	}
@@ -157,43 +142,31 @@ func (e *Expander) Expand(ctx context.Context, r *render.Render) (*expander.Expa
 	return &expander.ExpandResult{Resources: resources, Errors: errs}, nil
 }
 
-func (s *expandState) parseHelmRelease(res *resource.Resource) (unstructuredRelease, error) {
-	m, err := res.Map()
+func (s *expandState) parseHelmRelease(res *resource.Resource) (*helmv2.HelmRelease, error) {
+	hr, err := decodeResource[helmv2.HelmRelease](res)
 	if err != nil {
-		return unstructuredRelease{}, err
+		return nil, err
 	}
-	u := &unstructured.Unstructured{}
-	u.SetUnstructuredContent(m)
-	spec, ok := m["spec"].(map[string]any)
-	if !ok {
-		return unstructuredRelease{}, fmt.Errorf("HelmRelease %s/%s has no spec", u.GetNamespace(), u.GetName())
+	if hr.Spec.Chart == nil {
+		return nil, fmt.Errorf("HelmRelease %s/%s has no spec.chart", hr.Namespace, hr.Name)
 	}
-	return unstructuredRelease{
-		name:      u.GetName(),
-		namespace: u.GetNamespace(),
-		spec:      spec,
-	}, nil
+	return hr, nil
 }
 
-func (s *expandState) parseRepository(res *resource.Resource) (unstructuredRepository, error) {
-	m, err := res.Map()
+func (s *expandState) parseRepository(res *resource.Resource) (*sourcev1.HelmRepository, error) {
+	repo, err := decodeResource[sourcev1.HelmRepository](res)
 	if err != nil {
-		return unstructuredRepository{}, err
+		return nil, err
 	}
-	u := &unstructured.Unstructured{}
-	u.SetUnstructuredContent(m)
-	spec, ok := m["spec"].(map[string]any)
-	if !ok {
-		return unstructuredRepository{}, fmt.Errorf("%s %s/%s has no spec", res.GetKind(), u.GetNamespace(), u.GetName())
+	return repo, nil
+}
+
+func (s *expandState) parseOCIRepository(res *resource.Resource) (*sourcev1.OCIRepository, error) {
+	repo, err := decodeResource[sourcev1.OCIRepository](res)
+	if err != nil {
+		return nil, err
 	}
-	url, _, _ := unstructured.NestedString(spec, "url")
-	typ, _, _ := unstructured.NestedString(spec, "type")
-	return unstructuredRepository{
-		name:      u.GetName(),
-		namespace: u.GetNamespace(),
-		url:       url,
-		isOCI:     typ == "oci" || res.GetKind() == "OCIRepository",
-	}, nil
+	return repo, nil
 }
 func (s *expandState) renderAllCharts(ctx context.Context) (resmap.ResMap, []error, error) {
 	var tasks []RenderTask
@@ -201,44 +174,40 @@ func (s *expandState) renderAllCharts(ctx context.Context) (resmap.ResMap, []err
 	for _, h := range s.releases {
 		values, err := s.composeValues(h)
 		if err != nil {
-			return nil, nil, fmt.Errorf("error composing values for %s/%s: %w", h.namespace, h.name, err)
+			return nil, nil, fmt.Errorf("error composing values for %s/%s: %w", h.Namespace, h.Name, err)
 		}
 		src, err := s.findChartUrl(h)
 		if err != nil {
-			s.logger.V(1).Info("skipping HelmRelease, cannot resolve chart source", "name", h.name, "namespace", h.namespace, "error", err)
-			skipErrs = append(skipErrs, fmt.Errorf("HelmRelease %s/%s: %w", h.namespace, h.name, err))
+			s.logger.V(1).Info("skipping HelmRelease, cannot resolve chart source", "name", h.Name, "namespace", h.Namespace, "error", err)
+			skipErrs = append(skipErrs, fmt.Errorf("HelmRelease %s/%s: %w", h.Namespace, h.Name, err))
 			continue
 		}
 
-		chartName := nestedString(h.spec, "chart", "spec", "chart")
-		chartVersion := nestedString(h.spec, "chart", "spec", "version")
-		releaseName := nestedString(h.spec, "releaseName")
+		chartName := h.Spec.Chart.Spec.Chart
+		chartVersion := h.Spec.Chart.Spec.Version
+		releaseName := h.Spec.ReleaseName
 		if releaseName == "" {
-			releaseName = h.name
+			releaseName = h.Name
 		}
-		targetNamespace := nestedString(h.spec, "targetNamespace")
-		namespace := targetNamespace
+		namespace := h.Spec.TargetNamespace
 		if namespace == "" {
-			namespace = h.namespace
+			namespace = h.Namespace
 		}
 
-		install := nestedMap(h.spec, "install")
-		postRenderer, err := buildPostRenderersFromSpec(h.name, h.namespace, h.spec)
-		if err != nil {
-			return nil, nil, fmt.Errorf("error building post renderers for %s/%s: %w", h.namespace, h.name, err)
-		}
+		install := h.GetInstall()
+		postRenderer := buildPostRenderers(h)
 		tasks = append(tasks, RenderTask{
 			values:          values,
 			chart:           chartName,
 			version:         chartVersion,
-			repo:            repo.Entry{URL: src.url, Name: fmt.Sprintf("%s-%s", h.namespace, h.name)},
+			repo:            repo.Entry{URL: src.url, Name: fmt.Sprintf("%s-%s", h.Namespace, h.Name)},
 			localChartPath:  src.localPath,
 			releaseName:     releaseName,
 			namespace:       namespace,
-			skipCRDs:        nestedBoolDefault(install, false, "skipCRDs"),
-			replace:         nestedBoolDefault(install, false, "replace"),
-			disableHooks:    nestedBoolDefault(install, false, "disableHooks"),
-			createNamespace: nestedBoolDefault(install, false, "createNamespace"),
+			skipCRDs:        install.SkipCRDs,
+			replace:         install.Replace,
+			disableHooks:    install.DisableHooks,
+			createNamespace: install.CreateNamespace,
 			isOCI:           src.isOCI,
 			postRenderer:    postRenderer,
 		})
@@ -254,32 +223,16 @@ func (s *expandState) renderAllCharts(ctx context.Context) (resmap.ResMap, []err
 	return resources, append(skipErrs, renderErrs...), nil
 }
 
-func (s *expandState) composeValues(hr unstructuredRelease) (chartcommon.Values, error) {
+func (s *expandState) composeValues(hr *helmv2.HelmRelease) (chartcommon.Values, error) {
 	var result chartcommon.Values
-	logger := s.logger.WithValues("release", hr.name, "namespace", hr.namespace)
+	logger := s.logger.WithValues("release", hr.Name, "namespace", hr.Namespace)
 
-	valuesFrom, ok := hr.spec["valuesFrom"].([]any)
-	if !ok {
-		valuesFrom = nil
-	}
-
-	for _, vIf := range valuesFrom {
-		vMap, ok := vIf.(map[string]any)
-		if !ok {
-			continue
-		}
-		kind, _, _ := unstructured.NestedString(vMap, "kind")
-		name, _, _ := unstructured.NestedString(vMap, "name")
-		targetPath, _, _ := unstructured.NestedString(vMap, "targetPath")
-		valuesKey, _, _ := unstructured.NestedString(vMap, "valuesKey")
-		if valuesKey == "" {
-			valuesKey = "values.yaml"
-		}
-
-		namespacedName := types.NamespacedName{Namespace: hr.namespace, Name: name}
+	for _, ref := range hr.Spec.ValuesFrom {
+		valuesKey := ref.GetValuesKey()
+		namespacedName := types.NamespacedName{Namespace: hr.Namespace, Name: ref.Name}
 		var valuesData []byte
 
-		switch kind {
+		switch ref.Kind {
 		case "ConfigMap":
 			var cm corev1.ConfigMap
 			found, err := s.findResource(configMapGVK, namespacedName, &cm)
@@ -291,7 +244,7 @@ func (s *expandState) composeValues(hr unstructuredRelease) (chartcommon.Values,
 				continue
 			}
 			if data, ok := cm.Data[valuesKey]; !ok {
-				return nil, fmt.Errorf("missing key '%s' in %s '%s'", kind, valuesKey, namespacedName)
+				return nil, fmt.Errorf("missing key '%s' in %s '%s'", ref.Kind, valuesKey, namespacedName)
 			} else {
 				valuesData = []byte(data)
 			}
@@ -306,19 +259,19 @@ func (s *expandState) composeValues(hr unstructuredRelease) (chartcommon.Values,
 				continue
 			}
 			if data, ok := secret.Data[valuesKey]; !ok {
-				return nil, fmt.Errorf("missing key '%s' in %s '%s'", kind, valuesKey, namespacedName)
+				return nil, fmt.Errorf("missing key '%s' in %s '%s'", ref.Kind, valuesKey, namespacedName)
 			} else {
 				valuesData = []byte(data)
 			}
 		default:
-			return nil, fmt.Errorf("unsupported ValuesReference kind '%s'", kind)
+			return nil, fmt.Errorf("unsupported ValuesReference kind '%s'", ref.Kind)
 		}
 
-		switch targetPath {
+		switch ref.TargetPath {
 		case "":
 			values, err := chartcommon.ReadValues(valuesData)
 			if err != nil {
-				return nil, fmt.Errorf("error reading values from %s '%s': %w", kind, namespacedName, err)
+				return nil, fmt.Errorf("error reading values from %s '%s': %w", ref.Kind, namespacedName, err)
 			}
 			result = mergeMaps(result, values)
 		default:
@@ -329,21 +282,21 @@ func (s *expandState) composeValues(hr unstructuredRelease) (chartcommon.Values,
 			if (strings.HasPrefix(stringValuesData, singleQuote) && strings.HasSuffix(stringValuesData, singleQuote)) ||
 				(strings.HasPrefix(stringValuesData, doubleQuote) && strings.HasSuffix(stringValuesData, doubleQuote)) {
 				stringValuesData = strings.Trim(stringValuesData, singleQuote+doubleQuote)
-				singleValue := targetPath + "=" + stringValuesData
+				singleValue := ref.TargetPath + "=" + stringValuesData
 				err = strvals.ParseIntoString(singleValue, result)
 			} else {
-				singleValue := targetPath + "=" + stringValuesData
+				singleValue := ref.TargetPath + "=" + stringValuesData
 				err = strvals.ParseInto(singleValue, result)
 			}
 			if err != nil {
 				return nil, fmt.Errorf("unable to merge value from key '%s' in %s '%s' into target path '%s': %w",
-					valuesKey, kind, namespacedName, targetPath, err)
+					valuesKey, ref.Kind, namespacedName, ref.TargetPath, err)
 			}
 		}
 	}
 
 	// Merge inline values from spec.values
-	if inlineValues, ok := hr.spec["values"].(map[string]any); ok {
+	if inlineValues := hr.GetValues(); inlineValues != nil {
 		result = mergeMaps(result, inlineValues)
 	}
 
@@ -357,35 +310,34 @@ type chartSource struct {
 	localPath string
 }
 
-func (s *expandState) findChartUrl(source unstructuredRelease) (chartSource, error) {
-	sourceRef := nestedMap(source.spec, "chart", "spec", "sourceRef")
-	if sourceRef == nil {
-		return chartSource{}, fmt.Errorf("HelmRelease %s/%s has no chart.spec.sourceRef", source.namespace, source.name)
+func (s *expandState) findChartUrl(source *helmv2.HelmRelease) (chartSource, error) {
+	if source.Spec.Chart == nil {
+		return chartSource{}, fmt.Errorf("HelmRelease %s/%s has no chart.spec.sourceRef", source.Namespace, source.Name)
 	}
-
-	namespace, _ := sourceRef["namespace"].(string)
+	sourceRef := source.Spec.Chart.Spec.SourceRef
+	namespace := sourceRef.Namespace
 	if namespace == "" {
-		namespace = source.namespace
+		namespace = source.Namespace
 	}
-	name, _ := sourceRef["name"].(string)
-	kind, _ := sourceRef["kind"].(string)
+	name := sourceRef.Name
+	kind := sourceRef.Kind
 
 	switch kind {
 	case "HelmRepository":
 		for _, hr := range s.repositories {
-			if hr.namespace == namespace && hr.name == name {
-				return chartSource{url: hr.url, isOCI: hr.isOCI}, nil
+			if hr.Namespace == namespace && hr.Name == name {
+				return chartSource{url: hr.Spec.URL, isOCI: hr.Spec.Type == "oci"}, nil
 			}
 		}
 	case "OCIRepository":
 		for _, oci := range s.ociRepositories {
-			if oci.namespace == namespace && oci.name == name {
-				return chartSource{url: oci.url, isOCI: true}, nil
+			if oci.Namespace == namespace && oci.Name == name {
+				return chartSource{url: oci.Spec.URL, isOCI: true}, nil
 			}
 		}
 	case "GitRepository":
 		if s.resolver == nil {
-			s.logger.V(1).Info("skipping HelmRelease with GitRepository chart source (requires --resolve-git)", "name", source.name, "namespace", source.namespace)
+			s.logger.V(1).Info("skipping HelmRelease with GitRepository chart source (requires --resolve-git)", "name", source.Name, "namespace", source.Namespace)
 			return chartSource{}, nil
 		}
 		baseDir, ok := s.resolver.ResolvePath(namespace, name)
@@ -393,15 +345,27 @@ func (s *expandState) findChartUrl(source unstructuredRelease) (chartSource, err
 			s.logger.V(1).Info("skipping HelmRelease with unresolved GitRepository chart source", "name", name, "namespace", namespace)
 			return chartSource{}, nil
 		}
-		chartPath := strings.TrimPrefix(nestedString(source.spec, "chart", "spec", "chart"), "./")
+		chartPath := strings.TrimPrefix(source.Spec.Chart.Spec.Chart, "./")
 		if chartPath == "" {
-			return chartSource{}, fmt.Errorf("HelmRelease %s/%s has no chart.spec.chart path", source.namespace, source.name)
+			return chartSource{}, fmt.Errorf("HelmRelease %s/%s has no chart.spec.chart path", source.Namespace, source.Name)
 		}
 		return chartSource{localPath: filepath.Join(baseDir, chartPath)}, nil
 	default:
 		return chartSource{}, fmt.Errorf("unsupported source kind '%s'", kind)
 	}
 	return chartSource{}, fmt.Errorf("unable to find source '%s'", name)
+}
+
+func decodeResource[T any](res *resource.Resource) (*T, error) {
+	var out T
+	m, err := res.Map()
+	if err != nil {
+		return nil, err
+	}
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(m, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 func (s *expandState) findResource(gvk resid.Gvk, namespacedName types.NamespacedName, to any) (bool, error) {
@@ -416,72 +380,6 @@ func (s *expandState) findResource(gvk resid.Gvk, namespacedName types.Namespace
 	}
 	u.SetUnstructuredContent(m)
 	return true, s.scheme.Convert(&u, to, nil)
-}
-
-// nestedField extracts a value from a nested map following the given key path.
-// Returns (nil, false) if any key is missing. Does not deep-copy.
-func nestedField(m map[string]any, keys ...string) (any, bool) {
-	for i, key := range keys {
-		val, ok := m[key]
-		if !ok {
-			return nil, false
-		}
-		if i == len(keys)-1 {
-			return val, true
-		}
-		next, ok := val.(map[string]any)
-		if !ok {
-			return nil, false
-		}
-		m = next
-	}
-	return nil, false
-}
-
-// nestedString extracts a nested string from a map following the given key path.
-func nestedString(m map[string]any, keys ...string) string {
-	val, _ := nestedField(m, keys...)
-	if s, ok := val.(string); ok {
-		return s
-	}
-	return ""
-}
-
-// nestedMap extracts a nested map from a map following the given key path.
-// Unlike unstructured.NestedMap, this does not deep-copy which avoids
-// panics on non-JSON-safe types (e.g. raw int).
-func nestedMap(m map[string]any, keys ...string) map[string]any {
-	for i, key := range keys {
-		if i == len(keys)-1 {
-			val, ok := m[key]
-			if !ok {
-				return nil
-			}
-			result, ok := val.(map[string]any)
-			if !ok {
-				return nil
-			}
-			return result
-		}
-		next, ok := m[key]
-		if !ok {
-			return nil
-		}
-		m, ok = next.(map[string]any)
-		if !ok {
-			return nil
-		}
-	}
-	return m
-}
-
-// nestedBoolDefault extracts a nested bool, returning the default if not found.
-func nestedBoolDefault(m map[string]any, def bool, keys ...string) bool {
-	val, _ := nestedField(m, keys...)
-	if b, ok := val.(bool); ok {
-		return b
-	}
-	return def
 }
 
 // mergeMaps recursively merges overlay into base, returning a new map.

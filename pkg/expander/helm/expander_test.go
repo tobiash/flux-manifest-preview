@@ -5,8 +5,11 @@ import (
 	"context"
 	"testing"
 
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-logr/logr"
 	"github.com/tobiash/flux-manifest-preview/pkg/render"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/kustomize/api/resmap"
 )
 
@@ -66,28 +69,22 @@ func TestRenderAllCharts_PassesPostRendererToRunner(t *testing.T) {
 		runner: runner,
 		render: render.NewDefaultRender(logr.Discard()),
 		logger: logr.Discard(),
-		releases: []unstructuredRelease{{
-			name:      "podinfo",
-			namespace: "default",
-			spec: map[string]any{
-				"chart": map[string]any{
-					"spec": map[string]any{
-						"chart": "podinfo",
-						"sourceRef": map[string]any{
-							"kind": "HelmRepository",
-							"name": "podinfo",
-						},
+		releases: []*helmv2.HelmRelease{{
+			ObjectMeta: metav1.ObjectMeta{Name: "podinfo", Namespace: "default"},
+			Spec: helmv2.HelmReleaseSpec{
+				Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{
+					Chart: "podinfo",
+					SourceRef: helmv2.CrossNamespaceObjectReference{
+						Kind: "HelmRepository",
+						Name: "podinfo",
 					},
-				},
-				"commonMetadata": map[string]any{
-					"labels": map[string]any{"env": "prod"},
-				},
+				}},
+				CommonMetadata: &helmv2.CommonMetadata{Labels: map[string]string{"env": "prod"}},
 			},
 		}},
-		repositories: []unstructuredRepository{{
-			name:      "podinfo",
-			namespace: "default",
-			url:       "https://example.com/charts",
+		repositories: []*sourcev1.HelmRepository{{
+			ObjectMeta: metav1.ObjectMeta{Name: "podinfo", Namespace: "default"},
+			Spec:       sourcev1.HelmRepositorySpec{URL: "https://example.com/charts"},
 		}},
 	}
 
@@ -125,20 +122,17 @@ func TestRenderAllCharts_ResolvesGitRepositoryChartSource(t *testing.T) {
 		resolver: stubChartSourceResolver{"flux-system/podinfo": "/tmp/source"},
 		render:   render.NewDefaultRender(logr.Discard()),
 		logger:   logr.Discard(),
-		releases: []unstructuredRelease{{
-			name:      "podinfo",
-			namespace: "default",
-			spec: map[string]any{
-				"chart": map[string]any{
-					"spec": map[string]any{
-						"chart": "./charts/podinfo",
-						"sourceRef": map[string]any{
-							"kind":      "GitRepository",
-							"name":      "podinfo",
-							"namespace": "flux-system",
-						},
+		releases: []*helmv2.HelmRelease{{
+			ObjectMeta: metav1.ObjectMeta{Name: "podinfo", Namespace: "default"},
+			Spec: helmv2.HelmReleaseSpec{
+				Chart: &helmv2.HelmChartTemplate{Spec: helmv2.HelmChartTemplateSpec{
+					Chart: "./charts/podinfo",
+					SourceRef: helmv2.CrossNamespaceObjectReference{
+						Kind:      "GitRepository",
+						Name:      "podinfo",
+						Namespace: "flux-system",
 					},
-				},
+				}},
 			},
 		}},
 	}
