@@ -1,6 +1,7 @@
 package gitrepo
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	gitrepository "github.com/fluxcd/pkg/git/repository"
 	"github.com/go-logr/logr"
 	"github.com/tobiash/flux-manifest-preview/pkg/render"
 	"sigs.k8s.io/kustomize/api/hasher"
@@ -77,7 +79,7 @@ spec:
 	originalClone := gitCloneFunc
 	defer func() { gitCloneFunc = originalClone }()
 	var cloneCalls atomic.Int32
-	gitCloneFunc = func(_ string, dest string, _ string) error {
+	gitCloneFunc = func(_ context.Context, _ string, dest string, _ gitrepository.CloneConfig) error {
 		cloneCalls.Add(1)
 		if err := os.MkdirAll(dest, 0o755); err != nil {
 			return err
@@ -115,6 +117,84 @@ spec:
 	}
 	if _, ok := scopedB.ResolvePath("flux-system", "local-path-provisioner"); !ok {
 		t.Fatal("expected second scoped expander to resolve shared clone")
+	}
+}
+
+func TestExpand_PassesRefAndSparseCheckoutToClone(t *testing.T) {
+	exp, err := NewExpander(logr.Discard())
+	if err != nil {
+		t.Fatalf("NewExpander() error = %v", err)
+	}
+	defer exp.Cleanup()
+
+	r := newRenderFromYAML(t, `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: app
+  namespace: flux-system
+spec:
+  url: https://github.com/example/app
+  recurseSubmodules: true
+  sparseCheckout:
+  - charts/app
+  - deploy
+  ref:
+    branch: main
+    commit: abc123
+`)
+
+	originalClone := gitCloneFunc
+	defer func() { gitCloneFunc = originalClone }()
+	called := make(chan gitrepository.CloneConfig, 1)
+	gitCloneFunc = func(_ context.Context, _ string, dest string, cfg gitrepository.CloneConfig) error {
+		called <- cfg
+		return os.MkdirAll(dest, 0o755)
+	}
+
+	if _, err := exp.WithSourceRoot(t.TempDir()).Expand(context.Background(), r); err != nil {
+		t.Fatalf("Expand() error = %v", err)
+	}
+
+	select {
+	case cfg := <-called:
+		if got, want := cfg.Branch, "main"; got != want {
+			t.Fatalf("Branch = %q, want %q", got, want)
+		}
+		if got, want := cfg.Commit, "abc123"; got != want {
+			t.Fatalf("Commit = %q, want %q", got, want)
+		}
+		if !cfg.RecurseSubmodules {
+			t.Fatal("expected RecurseSubmodules to be true")
+		}
+		if got, want := cfg.SparseCheckoutDirectories, []string{"charts/app", "deploy"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+			t.Fatalf("SparseCheckoutDirectories = %#v, want %#v", got, want)
+		}
+	default:
+		t.Fatal("expected clone config to be passed to gitCloneFunc")
+	}
+}
+
+func TestCloneConfigForSpec_MapsReferenceFields(t *testing.T) {
+	spec := map[string]any{
+		"ref": map[string]any{
+			"tag":    "v1.2.3",
+			"semver": ">=1.0.0 <2.0.0",
+			"name":   "refs/pull/1/head",
+		},
+	}
+
+	cfg, err := cloneConfigForSpec(spec)
+	if err != nil {
+		t.Fatalf("cloneConfigForSpec() error = %v", err)
+	}
+	if got, want := cfg.Tag, "v1.2.3"; got != want {
+		t.Fatalf("Tag = %q, want %q", got, want)
+	}
+	if got, want := cfg.SemVer, ">=1.0.0 <2.0.0"; got != want {
+		t.Fatalf("SemVer = %q, want %q", got, want)
+	}
+	if got, want := cfg.RefName, "refs/pull/1/head"; got != want {
+		t.Fatalf("RefName = %q, want %q", got, want)
 	}
 }
 

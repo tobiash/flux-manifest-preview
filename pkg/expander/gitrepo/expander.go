@@ -10,6 +10,9 @@ import (
 	"strings"
 	"sync"
 
+	fluxgit "github.com/fluxcd/pkg/git"
+	fluxgogit "github.com/fluxcd/pkg/git/gogit"
+	gitrepository "github.com/fluxcd/pkg/git/repository"
 	"github.com/go-logr/logr"
 	"github.com/tobiash/flux-manifest-preview/pkg/expander"
 	"github.com/tobiash/flux-manifest-preview/pkg/render"
@@ -99,10 +102,13 @@ func (e *Expander) WithSourceRoot(path string) *Expander {
 }
 
 // Expand implements expander.Expander.
-func (e *Expander) Expand(_ context.Context, r *render.Render) (*expander.ExpandResult, error) {
+func (e *Expander) Expand(ctx context.Context, r *render.Render) (*expander.ExpandResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	type gitRepoInfo struct {
-		url string
-		ref string // branch or tag
+		url   string
+		clone gitrepository.CloneConfig
 	}
 
 	// Collect GitRepository resources.
@@ -124,10 +130,13 @@ func (e *Expander) Expand(_ context.Context, r *render.Render) (*expander.Expand
 		if url == "" {
 			continue
 		}
-		// Extract ref: prefer branch, then tag.
-		ref := extractRef(spec)
 		key := res.GetNamespace() + "/" + res.GetName()
-		repos[key] = gitRepoInfo{url: url, ref: ref}
+		cloneCfg, err := cloneConfigForSpec(spec)
+		if err != nil {
+			e.log.Error(err, "failed to parse GitRepository ref, skipping", "key", key, "url", url)
+			continue
+		}
+		repos[key] = gitRepoInfo{url: url, clone: cloneCfg}
 	}
 
 	if len(repos) == 0 {
@@ -156,7 +165,7 @@ func (e *Expander) Expand(_ context.Context, r *render.Render) (*expander.Expand
 			continue
 		}
 
-		if err := e.ensureSharedClone(key, info.url, info.ref); err != nil {
+		if err := e.ensureSharedClone(ctx, key, info.url, info.clone); err != nil {
 			e.log.Error(err, "failed to clone GitRepository, skipping", "key", key, "url", info.url)
 			continue
 		}
@@ -203,7 +212,7 @@ func (e *Expander) setSharedClonePath(key, path string) {
 	e.shared.clones.paths[key] = path
 }
 
-func (e *Expander) ensureSharedClone(key, rawURL, ref string) error {
+func (e *Expander) ensureSharedClone(ctx context.Context, key, rawURL string, cloneCfg gitrepository.CloneConfig) error {
 	if _, exists := e.sharedClonePath(key); exists {
 		return nil
 	}
@@ -218,8 +227,8 @@ func (e *Expander) ensureSharedClone(key, rawURL, ref string) error {
 			return nil, fmt.Errorf("creating clone directory: %w", err)
 		}
 
-		e.log.V(1).Info("cloning GitRepository", "key", key, "url", rawURL, "ref", ref)
-		if err := gitCloneFunc(rawURL, clonePath, ref); err != nil {
+		e.log.V(1).Info("cloning GitRepository", "key", key, "url", rawURL, "ref", describeCloneConfig(cloneCfg))
+		if err := gitCloneFunc(ctx, rawURL, clonePath, cloneCfg); err != nil {
 			return nil, err
 		}
 
@@ -229,31 +238,115 @@ func (e *Expander) ensureSharedClone(key, rawURL, ref string) error {
 	return err
 }
 
-func extractRef(spec map[string]any) string {
+func cloneConfigForSpec(spec map[string]any) (gitrepository.CloneConfig, error) {
 	ref, ok := spec["ref"].(map[string]any)
 	if !ok {
-		return ""
+		ref = nil
+	}
+	cloneCfg := gitrepository.CloneConfig{
+		CheckoutStrategy:  gitrepository.CheckoutStrategy{},
+		RecurseSubmodules: nestedBool(spec, "recurseSubmodules"),
 	}
 	if branch, _, _ := unstructured.NestedString(ref, "branch"); branch != "" {
-		return branch
+		cloneCfg.Branch = branch
 	}
 	if tag, _, _ := unstructured.NestedString(ref, "tag"); tag != "" {
-		return tag
+		cloneCfg.Tag = tag
 	}
-	return ""
+	if semver, _, _ := unstructured.NestedString(ref, "semver"); semver != "" {
+		cloneCfg.SemVer = semver
+	}
+	if name, _, _ := unstructured.NestedString(ref, "name"); name != "" {
+		cloneCfg.RefName = name
+	}
+	if commit, _, _ := unstructured.NestedString(ref, "commit"); commit != "" {
+		cloneCfg.Commit = commit
+	}
+	if sparseCheckout, ok, err := unstructured.NestedStringSlice(spec, "sparseCheckout"); err != nil {
+		return gitrepository.CloneConfig{}, err
+	} else if ok {
+		cloneCfg.SparseCheckoutDirectories = append([]string(nil), sparseCheckout...)
+	}
+	return cloneCfg, nil
 }
 
-func gitClone(url, dest, ref string) error {
-	args := []string{"clone", "--depth", "1"}
-	if ref != "" {
-		args = append(args, "--branch", ref)
+func gitClone(ctx context.Context, rawURL, dest string, cloneCfg gitrepository.CloneConfig) error {
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	args = append(args, url, dest)
-	cmd := exec.Command("git", args...)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git clone %s: %s: %w", url, string(out), err)
+	authOpts, err := authOptionsForURL(rawURL)
+	if err != nil {
+		return err
+	}
+	client, err := fluxgogit.NewClient(dest, authOpts, fluxgogit.WithFallbackToDefaultKnownHosts())
+	if err != nil {
+		return fmt.Errorf("creating git client for %s: %w", rawURL, err)
+	}
+	defer client.Close()
+	if _, err := client.Clone(ctx, rawURL, cloneCfg); err != nil {
+		return fmt.Errorf("cloning %s: %w", rawURL, err)
 	}
 	return nil
+}
+
+func authOptionsForURL(rawURL string) (*fluxgit.AuthOptions, error) {
+	u, err := parseGitURL(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("parsing git url %q: %w", rawURL, err)
+	}
+	if u.Scheme == string(fluxgit.SSH) {
+		username := u.User.Username()
+		if username == "" {
+			username = fluxgit.DefaultPublicKeyAuthUser
+		}
+		return &fluxgit.AuthOptions{
+			Transport: fluxgit.SSH,
+			Host:      u.Host,
+			Username:  username,
+		}, nil
+	}
+	return fluxgit.NewAuthOptions(*u, nil)
+}
+
+func parseGitURL(raw string) (*url.URL, error) {
+	if strings.Contains(raw, "://") {
+		return url.Parse(raw)
+	}
+	if at := strings.Index(raw, "@"); at >= 0 {
+		remainder := raw[at+1:]
+		parts := strings.SplitN(remainder, ":", 2)
+		if len(parts) == 2 {
+			return &url.URL{
+				Scheme: string(fluxgit.SSH),
+				User:   url.User(raw[:at]),
+				Host:   parts[0],
+				Path:   "/" + strings.TrimPrefix(parts[1], "/"),
+			}, nil
+		}
+	}
+	return url.Parse(raw)
+}
+
+func nestedBool(spec map[string]any, key string) bool {
+	v, ok := spec[key].(bool)
+	return ok && v
+}
+
+func describeCloneConfig(cfg gitrepository.CloneConfig) string {
+	switch {
+	case cfg.Commit != "":
+		return cfg.Commit
+	case cfg.RefName != "":
+		return cfg.RefName
+	case cfg.SemVer != "":
+		return cfg.SemVer
+	case cfg.Tag != "":
+		return cfg.Tag
+	case cfg.Branch != "":
+		return cfg.Branch
+	default:
+		return "default"
+	}
 }
 
 func isLocalURL(url string) bool {
