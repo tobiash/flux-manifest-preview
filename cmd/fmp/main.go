@@ -266,6 +266,9 @@ Use --init to generate a complete .fmp.yaml config file in the repo.`,
 
 	if err := rootCmd.Execute(); err != nil {
 		if errors.As(err, &expansionError) {
+			for _, w := range expansionError.Warnings {
+				fmt.Fprintf(os.Stderr, "WARNING: %v\n", w)
+			}
 			for _, e := range expansionError.Errors {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", e)
 			}

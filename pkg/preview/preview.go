@@ -44,7 +44,8 @@ type Preview struct {
 // not be resolved). The render/diff output is still produced but may
 // be incomplete.
 type ExpansionError struct {
-	Errors []error
+	Errors   []error
+	Warnings []error
 }
 
 func (e *ExpansionError) Error() string {
@@ -57,8 +58,9 @@ func (e *ExpansionError) Error() string {
 
 // loadRepoResult holds the result of loading and expanding a repo.
 type loadRepoResult struct {
-	render *render.Render
-	errors []error
+	render   *render.Render
+	errors   []error
+	warnings []error
 }
 
 func (p *Preview) loadRepo(path string) (*loadRepoResult, error) {
@@ -171,9 +173,9 @@ func (p *Preview) loadRepo(path string) (*loadRepoResult, error) {
 			return nil, fmt.Errorf("sops decryption failed: %w", err)
 		}
 	}
-	collectedErrors = append(collectedErrors, r.Warnings()...)
+	warnings := r.Warnings()
 
-	return &loadRepoResult{render: r, errors: collectedErrors}, nil
+	return &loadRepoResult{render: r, errors: collectedErrors, warnings: warnings}, nil
 }
 
 // Render renders the resources at path and writes the YAML output.
@@ -191,7 +193,7 @@ func (p *Preview) Render(path string, out io.Writer) error {
 		return fmt.Errorf("error writing output: %w", err)
 	}
 	if len(result.errors) > 0 {
-		return &ExpansionError{Errors: result.errors}
+		return &ExpansionError{Errors: result.errors, Warnings: result.warnings}
 	}
 	return nil
 }
@@ -211,7 +213,7 @@ func (p *Preview) RenderJSON(path string, out io.Writer) error {
 		return fmt.Errorf("error writing output: %w", err)
 	}
 	if len(result.errors) > 0 {
-		return &ExpansionError{Errors: result.errors}
+		return &ExpansionError{Errors: result.errors, Warnings: result.warnings}
 	}
 	return nil
 }
