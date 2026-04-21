@@ -168,6 +168,9 @@ func (e *Expander) Expand(_ context.Context, r *render.Render) (*expander.Expand
 // ResolvePath returns the local filesystem path for a GitRepository source.
 // Returns ("", false) if the repository hasn't been cloned.
 func (e *Expander) ResolvePath(namespace, name string) (string, bool) {
+	if e == nil {
+		return "", false
+	}
 	key := namespace + "/" + name
 	if path, ok := e.localPaths[key]; ok {
 		return path, true

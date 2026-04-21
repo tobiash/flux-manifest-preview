@@ -394,11 +394,13 @@ func (s *expandState) findChartUrl(source unstructuredRelease) (chartSource, err
 		}
 	case "GitRepository":
 		if s.resolver == nil {
-			return chartSource{}, fmt.Errorf("GitRepository source requires --resolve-git")
+			s.logger.V(1).Info("skipping HelmRelease with GitRepository chart source (requires --resolve-git)", "name", source.name, "namespace", source.namespace)
+			return chartSource{}, nil
 		}
 		baseDir, ok := s.resolver.ResolvePath(namespace, name)
 		if !ok {
-			return chartSource{}, fmt.Errorf("unable to resolve GitRepository %s/%s", namespace, name)
+			s.logger.V(1).Info("skipping HelmRelease with unresolved GitRepository chart source", "name", name, "namespace", namespace)
+			return chartSource{}, nil
 		}
 		chartPath := strings.TrimPrefix(nestedString(source.spec, "chart", "spec", "chart"), "./")
 		if chartPath == "" {
