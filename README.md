@@ -1,136 +1,111 @@
-# Flux Manifest Preview
+# Flux Manifest Preview (`fmp`)
 
-`fmp` renders and diffs the manifests that Flux GitOps repositories produce.
+[![Build Status](https://github.com/tobiash/flux-manifest-preview/actions/workflows/ci.yml/badge.svg)](https://github.com/tobiash/flux-manifest-preview/actions/workflows/ci.yml)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/tobiash/flux-manifest-preview)](https://github.com/tobiash/flux-manifest-preview/releases/latest)
+[![Go Report Card](https://goreportcard.com/badge/github.com/tobiash/flux-manifest-preview)](https://goreportcard.com/report/github.com/tobiash/flux-manifest-preview)
+[![License](https://img.shields.io/github/license/tobiash/flux-manifest-preview)](https://github.com/tobiash/flux-manifest-preview/blob/main/LICENSE)
 
-It is built for a practical workflow:
-- render the manifests Flux Kustomizations point at
-- expand HelmReleases using their referenced HelmRepository or OCIRepository
-- optionally resolve external GitRepository sources
-- normalize known noisy fields
-- diff local worktree changes against `HEAD` or another revision
+`fmp` is a CLI tool designed to render and diff the manifests produced by Flux GitOps repositories. It bridges the gap between local development and the cluster by showing exactly what Flux would apply.
 
-## Status
+---
 
-This project is still under development.
+## 🚀 Key Features
 
-It is already useful for day-to-day repo validation and review, but the CLI and behavior may still change as the workflow gets refined. Expect rough edges, especially around less common repository layouts and integration-heavy cases.
+`fmp` understands common Flux repository patterns instead of treating YAML as flat files:
 
-## What It Does
+- **🚢 GitOps Awareness**: Discover and follow Flux `Kustomization.spec.path` and resolve external `GitRepository` sources.
+- **📦 Helm Integration**: Render `HelmRelease` resources through the Helm SDK, including support for post-renderers and `commonMetadata`.
+- **🔍 Intelligent Diffing**: Compare local worktree changes against `HEAD` or other revisions with noisy field normalization.
+- **🔐 Secret Support**: Decrypt SOPS-encrypted resources on the fly when requested.
+- **🧹 Clean Output**: Filter generated fields (like timestamps or random hashes) for deterministic and readable diffs.
 
-`fmp` understands common Flux repository patterns instead of treating YAML as flat files.
+> [!NOTE]
+> **Status**: This project is under active development. While it is useful for day-to-day validation and review, expect some rough edges as the workflow is refined.
 
-It can:
-- discover and follow Flux `Kustomization.spec.path`
-- render `HelmRelease` resources through the Helm SDK
-- apply Helm post-renderers and `commonMetadata`
-- optionally clone and follow external `GitRepository` sources
-- decrypt SOPS-encrypted resources when requested
-- filter or normalize generated fields for cleaner diffs
-- detect non-deterministic output and generate filter config
+---
 
-## Install
+## 💾 Install
 
-From source:
+**From source:**
 
 ```bash
 go install ./cmd/fmp
 ```
 
-Or outside this repo:
+**Directly via Go:**
 
 ```bash
 go install github.com/tobiash/flux-manifest-preview/cmd/fmp@latest
 ```
 
-## Requirements
+### 🛠️ Requirements
 
-`fmp` is a Go CLI, but some features depend on external tools:
-- `git` for git-aware diffing and external `GitRepository` resolution
-- `helm` registry/cache configuration when rendering Helm content from registries or repositories
+- `git`: For git-aware diffing and external repository resolution.
+- `helm`: For registry/cache configuration when rendering Helm charts.
 
-## Core Workflow
+---
 
-The main local workflow is now git-aware.
+## ⚡ Quick Start
+
+The core workflow is designed to be git-aware. Run this inside a Flux git worktree to see what would change if you committed your current work:
 
 ```bash
 fmp diff
 ```
 
-When run inside a git worktree, this compares the rendered output of:
-- `HEAD`
-- the current dirty worktree
+This compares the rendered output of `HEAD` against your current dirty worktree.
 
-That makes it useful as a "what would Flux apply if I committed this?" check.
+---
 
-## Commands
+## 🛠️ Usage & Commands
 
-Render a repo or path:
+### 🔍 Diffing Changes
+
+Compare the rendered output of different git refs or local paths:
+
+```bash
+fmp diff                      # Diff HEAD vs Worktree
+fmp diff HEAD~1               # Diff 1 commit back vs Worktree
+fmp diff main feature-branch  # Diff two branches
+fmp diff ./before ./after     # Diff two local paths
+fmp diff git:HEAD path:/tmp   # Mix git refs and local paths
+```
+
+### 📄 Rendering Manifests
+
+Render a repository or a specific path to standard output:
 
 ```bash
 fmp render <path>
 fmp render --output json <path>
 ```
 
-Diff common cases:
+### 🧪 Validation & Discovery
+
+Ensure your Flux resources are well-formed and discoverable:
 
 ```bash
-fmp diff
-fmp diff HEAD~1
-fmp diff main feature-branch
-fmp diff ./before ./after
-fmp diff git:HEAD path:/tmp/rendered
+fmp test <path>               # Validate that KS/HR can be rendered
+fmp get ks <path>             # List discovered Kustomizations
+fmp get hr <path>             # List discovered HelmReleases
 ```
 
-Validate that discovered Kustomizations and HelmReleases can be rendered:
+### 🤖 CI & Advanced Tools
+
+Tools for automation and handling non-deterministic output:
 
 ```bash
-fmp test <path>
+fmp ci                        # CI-optimized diff mode
+fmp detect-permadiffs <path>  # Detect noisy fields and generate filters
 ```
 
-List discovered Flux resources:
+---
 
-```bash
-fmp get ks <path>
-fmp get hr <path>
-```
+## ⚙️ Configuration
 
-Detect permadiffs and generate normalization config:
+`fmp` auto-discovers configuration from `.fmp.yaml`, `.fmp.yml`, or `.github/fmp.yaml`.
 
-```bash
-fmp detect-permadiffs <path>
-fmp detect-permadiffs --init <path>
-```
-
-CI-oriented diff mode:
-
-```bash
-fmp ci
-```
-
-## Common Flags
-
-```bash
--k, --path            Path to render, repeatable
--r, --recursive       Recursively discover paths under each -k directory
--H, --render-helm     Render HelmRelease objects
-    --resolve-git     Clone and follow external GitRepository sources
-    --sops-decrypt    Decrypt SOPS-encrypted secrets
-    --filter          Use an explicit filter definition file
-    --filter-yaml     Use filters from an inline YAML string
--s, --sort            Sort output for deterministic diffs
-    --exclude-crds    Remove CRDs from rendered output
--v, --verbose         Enable debug logging
--q, --quiet           Errors only
-```
-
-## Repo Config
-
-`fmp` auto-discovers repo configuration from:
-- `.fmp.yaml`
-- `.fmp.yml`
-- `.github/fmp.yaml`
-
-Example:
+**Example `.fmp.yaml`:**
 
 ```yaml
 paths:
@@ -150,58 +125,18 @@ filters:
         placeholder: "<<auto-generated>>"
 ```
 
-In git-aware `diff` mode, config is loaded from the current worktree, not from archived revisions. That is intentional: local config changes should affect the diff you are reviewing.
+*Note: In `diff` mode, configuration is loaded from the current worktree so that local config changes take immediate effect.*
 
-With config like the example above, you can make `fmp diff` the default review command for a repo without repeating `-k`, `-r`, or `-H` every time.
+---
 
-## Examples
+## 🐙 GitHub Action
 
-Review the current repo's pending changes:
-
-```bash
-fmp diff
-```
-
-Review one commit back against the current worktree:
-
-```bash
-fmp diff HEAD~1
-```
-
-Only diff resources produced by one HelmRelease:
-
-```bash
-fmp diff --hr home-assistant
-```
-
-Render a Flux repo with external GitRepository sources:
-
-```bash
-fmp --resolve-git -k clusters/kube render .
-```
-
-Render quietly unless something fails:
-
-```bash
-fmp -q test .
-```
-
-Turn on debug logging when you need to inspect expansion behavior:
-
-```bash
-fmp -v diff
-```
-
-## GitHub Action
-
-This repository includes a composite GitHub Action that runs `fmp diff` against a PR branch.
-
-### PR review workflow (recommended)
+Use `fmp` in your CI/CD pipelines to review PRs automatically.
 
 ```yaml
 - uses: actions/checkout@v4
   with:
-    fetch-depth: 0  # full history needed for git-aware diff
+    fetch-depth: 0  # Required for git-aware diffing
 
 - uses: tobiash/flux-manifest-preview@main
   with:
@@ -210,48 +145,30 @@ This repository includes a composite GitHub Action that runs `fmp diff` against 
     resolve-git: true
 ```
 
-The action renders both the base ref and the PR worktree, then outputs a unified diff.
-
-### Legacy two-checkout workflow
-
-The older `repo-a`/`repo-b` inputs still work but are deprecated:
-
-```yaml
-- uses: tobiash/flux-manifest-preview@main
-  with:
-    repo-a: ${{ steps.checkout-base.outputs.path }}
-    repo-b: .
-```
-
 ### Inputs
 
 | Input | Description | Default |
-|-------|-------------|---------|
+| :--- | :--- | :--- |
 | `repo` | Path to the repo checkout (must be a git worktree) | `.` |
-| `base-ref` | Git ref to diff against | auto-detects `origin/main` |
+| `base-ref` | Git ref to diff against | `origin/main` |
 | `helm` | Enable Helm rendering | `true` |
 | `resolve-git` | Clone external GitRepository sources | `false` |
 | `sort` | Sort output for deterministic diffs | `false` |
 | `exclude-crds` | Strip CRDs from output | `false` |
-| `config` | Explicit `.fmp.yaml` path | auto-discovered |
+| `config` | Explicit path to `.fmp.yaml` | *auto-discovered* |
 | `filter` | KIO filter YAML (overrides `.fmp.yaml`) | |
 
 ### Outputs
 
 | Output | Description |
-|--------|-------------|
+| :--- | :--- |
 | `diff` | Unified diff of rendered manifests |
 
-## Notes
+---
 
-- Directory diffs are still supported and remain a first-class mode.
-- Mixed git/path diffs are supported with explicit `git:` and `path:` prefixes.
-- Git-aware zero-argument `diff` requires running inside a git worktree.
-- Some Helm repositories or OCI references may still fail at render time if the remote chart reference is unavailable.
+## 🧪 Development
 
-## Development
-
-Run the test suite:
+Run the test suite and linter:
 
 ```bash
 go test ./...
