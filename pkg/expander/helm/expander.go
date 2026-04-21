@@ -7,18 +7,20 @@ import (
 	"strings"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	fluxchartutil "github.com/fluxcd/pkg/chartutil"
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/go-logr/logr"
 	"github.com/tobiash/flux-manifest-preview/pkg/expander"
 	"github.com/tobiash/flux-manifest-preview/pkg/render"
 	chartcommon "helm.sh/helm/v4/pkg/chart/common"
 	"helm.sh/helm/v4/pkg/repo/v1"
-	"helm.sh/helm/v4/pkg/strvals"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/kustomize/api/resmap"
 	"sigs.k8s.io/kustomize/api/resource"
 	"sigs.k8s.io/kustomize/kyaml/resid"
@@ -171,8 +173,12 @@ func (s *expandState) parseOCIRepository(res *resource.Resource) (*sourcev1.OCIR
 func (s *expandState) renderAllCharts(ctx context.Context) (resmap.ResMap, []error, error) {
 	var tasks []RenderTask
 	var skipErrs []error
+	valuesClient, err := s.newValuesClient()
+	if err != nil {
+		return nil, nil, fmt.Errorf("building values client: %w", err)
+	}
 	for _, h := range s.releases {
-		values, err := s.composeValues(h)
+		values, err := s.composeValues(ctx, valuesClient, h)
 		if err != nil {
 			return nil, nil, fmt.Errorf("error composing values for %s/%s: %w", h.Namespace, h.Name, err)
 		}
@@ -223,84 +229,23 @@ func (s *expandState) renderAllCharts(ctx context.Context) (resmap.ResMap, []err
 	return resources, append(skipErrs, renderErrs...), nil
 }
 
-func (s *expandState) composeValues(hr *helmv2.HelmRelease) (chartcommon.Values, error) {
-	var result chartcommon.Values
-	logger := s.logger.WithValues("release", hr.Name, "namespace", hr.Namespace)
-
-	for _, ref := range hr.Spec.ValuesFrom {
-		valuesKey := ref.GetValuesKey()
-		namespacedName := types.NamespacedName{Namespace: hr.Namespace, Name: ref.Name}
-		var valuesData []byte
-
-		switch ref.Kind {
-		case "ConfigMap":
-			var cm corev1.ConfigMap
-			found, err := s.findResource(configMapGVK, namespacedName, &cm)
-			if err != nil {
-				return nil, fmt.Errorf("error loading configmap %s: %w", namespacedName, err)
-			}
-			if !found {
-				logger.V(1).Info("configmap not found, ignoring values", "configmap", namespacedName)
-				continue
-			}
-			if data, ok := cm.Data[valuesKey]; !ok {
-				return nil, fmt.Errorf("missing key '%s' in %s '%s'", ref.Kind, valuesKey, namespacedName)
-			} else {
-				valuesData = []byte(data)
-			}
-		case "Secret":
-			var secret corev1.Secret
-			found, err := s.findResource(secretGVK, namespacedName, &secret)
-			if err != nil {
-				return nil, fmt.Errorf("error loading secret %s: %w", namespacedName, err)
-			}
-			if !found {
-				logger.V(1).Info("secret not found, ignoring values", "secret", namespacedName)
-				continue
-			}
-			if data, ok := secret.Data[valuesKey]; !ok {
-				return nil, fmt.Errorf("missing key '%s' in %s '%s'", ref.Kind, valuesKey, namespacedName)
-			} else {
-				valuesData = []byte(data)
-			}
-		default:
-			return nil, fmt.Errorf("unsupported ValuesReference kind '%s'", ref.Kind)
-		}
-
-		switch ref.TargetPath {
-		case "":
-			values, err := chartcommon.ReadValues(valuesData)
-			if err != nil {
-				return nil, fmt.Errorf("error reading values from %s '%s': %w", ref.Kind, namespacedName, err)
-			}
-			result = mergeMaps(result, values)
-		default:
-			stringValuesData := string(valuesData)
-			singleQuote := "'"
-			doubleQuote := "\""
-			var err error
-			if (strings.HasPrefix(stringValuesData, singleQuote) && strings.HasSuffix(stringValuesData, singleQuote)) ||
-				(strings.HasPrefix(stringValuesData, doubleQuote) && strings.HasSuffix(stringValuesData, doubleQuote)) {
-				stringValuesData = strings.Trim(stringValuesData, singleQuote+doubleQuote)
-				singleValue := ref.TargetPath + "=" + stringValuesData
-				err = strvals.ParseIntoString(singleValue, result)
-			} else {
-				singleValue := ref.TargetPath + "=" + stringValuesData
-				err = strvals.ParseInto(singleValue, result)
-			}
-			if err != nil {
-				return nil, fmt.Errorf("unable to merge value from key '%s' in %s '%s' into target path '%s': %w",
-					valuesKey, ref.Kind, namespacedName, ref.TargetPath, err)
-			}
-		}
+func (s *expandState) composeValues(ctx context.Context, valuesClient ctrlclient.Client, hr *helmv2.HelmRelease) (chartcommon.Values, error) {
+	inlineValues := hr.GetValues()
+	if len(hr.Spec.ValuesFrom) == 0 {
+		return inlineValues, nil
 	}
-
-	// Merge inline values from spec.values
-	if inlineValues := hr.GetValues(); inlineValues != nil {
-		result = mergeMaps(result, inlineValues)
+	values, err := fluxchartutil.ChartValuesFromReferences(
+		ctx,
+		s.logger.WithValues("release", hr.Name, "namespace", hr.Namespace),
+		valuesClient,
+		hr.Namespace,
+		inlineValues,
+		hr.Spec.ValuesFrom...,
+	)
+	if err != nil {
+		return nil, err
 	}
-
-	return result, nil
+	return values, nil
 }
 
 // chartSource holds the resolved chart location and whether it's an OCI reference.
@@ -368,36 +313,41 @@ func decodeResource[T any](res *resource.Resource) (*T, error) {
 	return &out, nil
 }
 
+func (s *expandState) newValuesClient() (ctrlclient.Client, error) {
+	objects := make([]ctrlclient.Object, 0)
+	for _, res := range s.render.Resources() {
+		switch res.GetGvk() {
+		case configMapGVK:
+			var cm corev1.ConfigMap
+			if err := s.convertResource(res, &cm); err != nil {
+				return nil, err
+			}
+			objects = append(objects, &cm)
+		case secretGVK:
+			var secret corev1.Secret
+			if err := s.convertResource(res, &secret); err != nil {
+				return nil, err
+			}
+			objects = append(objects, &secret)
+		}
+	}
+	return fake.NewClientBuilder().WithScheme(s.scheme).WithObjects(objects...).Build(), nil
+}
+
+func (s *expandState) convertResource(res *resource.Resource, to any) error {
+	m, err := res.Map()
+	if err != nil {
+		return err
+	}
+	var u unstructured.Unstructured
+	u.SetUnstructuredContent(m)
+	return s.scheme.Convert(&u, to, nil)
+}
+
 func (s *expandState) findResource(gvk resid.Gvk, namespacedName types.NamespacedName, to any) (bool, error) {
 	res, err := s.render.GetById(resid.NewResIdWithNamespace(gvk, namespacedName.Name, namespacedName.Namespace))
 	if err != nil {
 		return false, nil
 	}
-	var u unstructured.Unstructured
-	m, err := res.Map()
-	if err != nil {
-		return false, err
-	}
-	u.SetUnstructuredContent(m)
-	return true, s.scheme.Convert(&u, to, nil)
-}
-
-// mergeMaps recursively merges overlay into base, returning a new map.
-func mergeMaps(base, overlay map[string]any) map[string]any {
-	result := make(map[string]any)
-	for k, v := range base {
-		result[k] = v
-	}
-	for k, v := range overlay {
-		if existing, ok := result[k]; ok {
-			if existingMap, ok := existing.(map[string]any); ok {
-				if overlayMap, ok := v.(map[string]any); ok {
-					result[k] = mergeMaps(existingMap, overlayMap)
-					continue
-				}
-			}
-		}
-		result[k] = v
-	}
-	return result
+	return true, s.convertResource(res, to)
 }
