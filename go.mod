@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/fluxcd/helm-controller/api v1.5.3
+	github.com/fluxcd/kustomize-controller/api v1.6.1
 	github.com/fluxcd/pkg/apis/kustomize v1.15.1
 	github.com/fluxcd/pkg/chartutil v1.22.1
 	github.com/fluxcd/pkg/git v0.43.1
