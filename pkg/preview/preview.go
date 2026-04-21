@@ -447,8 +447,7 @@ func WithHelmReleaseFilter(name string) Opt {
 }
 
 // WithSOPSDecrypt enables decryption of SOPS-encrypted secrets before
-// diffing or rendering. Requires the sops binary in PATH and access
-// to the appropriate decryption keys.
+// diffing or rendering. Requires access to the appropriate decryption keys.
 func WithSOPSDecrypt() Opt {
 	return func(p *Preview) error {
 		p.sopsDecrypt = true

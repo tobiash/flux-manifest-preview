@@ -1,10 +1,9 @@
 package sops
 
 import (
-	"bytes"
 	"fmt"
-	"os/exec"
 
+	"github.com/getsops/sops/v3/decrypt"
 	"sigs.k8s.io/kustomize/api/resmap"
 	"sigs.k8s.io/kustomize/api/resource"
 	"sigs.k8s.io/kustomize/kyaml/resid"
@@ -65,17 +64,11 @@ func DecryptResources(rm resmap.ResMap) error {
 }
 
 func decryptYAML(data []byte) ([]byte, error) {
-	cmd := exec.Command("sops", "--decrypt", "--input-type", "yaml", "--output-type", "yaml", "/dev/stdin")
-	cmd.Stdin = bytes.NewReader(data)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("sops --decrypt failed: %w\n%s", err, stderr.String())
+	decrypted, err := decrypt.Data(data, "yaml")
+	if err != nil {
+		return nil, fmt.Errorf("sops decrypt failed: %w", err)
 	}
-
-	return stdout.Bytes(), nil
+	return decrypted, nil
 }
 
 func HasSOPSResources(rm resmap.ResMap) bool {

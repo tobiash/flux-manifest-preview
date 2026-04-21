@@ -63,7 +63,7 @@ func main() {
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable debug logging")
 	rootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "Suppress informational output (only show errors)")
 	rootCmd.PersistentFlags().BoolVar(&resolveGit, "resolve-git", false, "Clone external GitRepository sources to temp dirs")
-	rootCmd.PersistentFlags().BoolVar(&sopsDecrypt, "sops-decrypt", false, "Decrypt SOPS-encrypted secrets (requires sops binary in PATH)")
+	rootCmd.PersistentFlags().BoolVar(&sopsDecrypt, "sops-decrypt", false, "Decrypt SOPS-encrypted secrets")
 	rootCmd.PersistentFlags().StringVar(&helmRegistryConfig, "registry-config", "", "Helm Registry Config")
 	rootCmd.PersistentFlags().StringVar(&helmRepositoryConfig, "repository-config", "", "Helm Repository Config")
 	rootCmd.PersistentFlags().StringVar(&helmRepositoryCache, "repository-cache", "", "Helm Repository Cache")

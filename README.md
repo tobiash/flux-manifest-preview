@@ -47,7 +47,6 @@ go install github.com/tobiash/flux-manifest-preview/cmd/fmp@latest
 `fmp` is a Go CLI, but some features depend on external tools:
 - `git` for git-aware diffing and external `GitRepository` resolution
 - `helm` registry/cache configuration when rendering Helm content from registries or repositories
-- `sops` when using `--sops-decrypt`
 
 ## Core Workflow
 
