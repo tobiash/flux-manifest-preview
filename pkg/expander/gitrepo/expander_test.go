@@ -163,6 +163,9 @@ spec:
 		if got, want := cfg.Branch, "main"; got != want {
 			t.Fatalf("Branch = %q, want %q", got, want)
 		}
+		if !cfg.ShallowClone {
+			t.Fatal("expected ShallowClone to be true")
+		}
 		if got, want := cfg.Commit, "abc123"; got != want {
 			t.Fatalf("Commit = %q, want %q", got, want)
 		}
@@ -198,6 +201,9 @@ func TestCloneConfigForSpec_MapsReferenceFields(t *testing.T) {
 	}
 	if got, want := cfg.RefName, "refs/pull/1/head"; got != want {
 		t.Fatalf("RefName = %q, want %q", got, want)
+	}
+	if !cfg.ShallowClone {
+		t.Fatal("expected ShallowClone to be true")
 	}
 }
 

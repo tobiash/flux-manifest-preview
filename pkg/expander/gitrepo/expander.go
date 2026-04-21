@@ -260,6 +260,7 @@ func cloneConfigForSpec(spec map[string]any) (gitrepository.CloneConfig, error) 
 	cloneCfg := gitrepository.CloneConfig{
 		CheckoutStrategy:  gitrepository.CheckoutStrategy{},
 		RecurseSubmodules: nestedBool(spec, "recurseSubmodules"),
+		ShallowClone:      true,
 	}
 	if branch, _, _ := unstructured.NestedString(ref, "branch"); branch != "" {
 		cloneCfg.Branch = branch
