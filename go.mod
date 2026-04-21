@@ -1,6 +1,6 @@
 module github.com/tobiash/flux-manifest-preview
 
-go 1.25.0
+go 1.25.9
 
 require (
 	github.com/fluxcd/helm-controller/api v1.5.3

@@ -91,6 +91,8 @@ runs:
 
         if [[ -n "${{ inputs.repo-a }}" && -n "${{ inputs.repo-b }}" ]]; then
           echo "::warning::repo-a/repo-b inputs are deprecated; use repo and base-ref instead"
+          export FMP_REPO_A="${{ inputs.repo-a }}"
+          export FMP_REPO_B="${{ inputs.repo-b }}"
           DIFF=$(fmp ci)
           echo "$DIFF"
           {
