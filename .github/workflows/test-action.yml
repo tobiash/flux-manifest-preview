@@ -9,7 +9,7 @@ on:
 jobs:
   test-source-build:
     name: Test action (build from source)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -47,24 +47,18 @@ jobs:
           echo "${{ steps.fmp.outputs.diff }}" | grep -q "green" || { echo "Missing 'green' in diff"; exit 1; }
           echo "Diff contains expected changes"
 
-  test-fmp-test-command:
-    name: Test 'fmp test' command
-    runs-on: ubuntu-latest
+  test-cli:
+    name: Test fmp CLI commands
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-
-      - name: Install fmp (build from source)
-        run: |
-          go build -o /usr/local/bin/fmp ./cmd/fmp
-
+      - name: Build fmp
+        run: go build -o /usr/local/bin/fmp ./cmd/fmp
       - name: Run fmp test (should pass)
-        run: |
-          fmp test tests/action -k clusters/kube --render-helm=false -q
-
+        run: fmp test tests/action -k clusters/kube --render-helm=false -q
       - name: Run fmp test (should fail on broken path)
         run: |
           if fmp test tests/action -k nonexistent --render-helm=false -q 2>/dev/null; then
@@ -72,21 +66,6 @@ jobs:
             exit 1
           fi
           echo "Correctly failed for nonexistent path"
-
-  test-fmp-render-sorted:
-    name: Test 'fmp render --sort'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - name: Install fmp (build from source)
-        run: |
-          go build -o /usr/local/bin/fmp ./cmd/fmp
-
       - name: Render and verify sorted output
         run: |
           OUTPUT=$(fmp render tests/action -k apps/podinfo --render-helm=false -q -s)
