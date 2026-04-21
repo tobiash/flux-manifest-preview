@@ -45,7 +45,7 @@ func validateDiffArgs(_ *cobra.Command, args []string) error {
 	return nil
 }
 
-func runDiff(log logr.Logger, args []string, out io.Writer) error {
+func runDiff(log logr.Logger, args []string, out io.Writer, exportDir string, exportChangedOnly bool) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("determining current directory: %w", err)
@@ -84,7 +84,7 @@ func runDiff(log logr.Logger, args []string, out io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("error creating preview: %w", err)
 	}
-	return p.Diff(leftPath, rightPath, out)
+	return p.Diff(leftPath, rightPath, out, exportDir, exportChangedOnly)
 }
 
 func resolveDiffPlan(args []string, cwd string) (*diffPlan, error) {

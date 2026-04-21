@@ -155,6 +155,8 @@ Use `fmp` in your CI/CD pipelines to review PRs automatically.
 | `resolve-git` | Clone external GitRepository sources | `false` |
 | `sort` | Sort output for deterministic diffs | `false` |
 | `exclude-crds` | Strip CRDs from output | `false` |
+| `export-dir` | Export rendered manifests to this directory | |
+| `export-changed-only` | Only export manifests that have changed | `false` |
 | `config` | Explicit path to `.fmp.yaml` | *auto-discovered* |
 | `filter` | KIO filter YAML (overrides `.fmp.yaml`) | |
 

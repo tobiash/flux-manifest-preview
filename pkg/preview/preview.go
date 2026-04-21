@@ -239,7 +239,9 @@ func (p *Preview) Test(path string, out io.Writer) error {
 
 // Diff computes and writes the diff between two repository paths.
 // If a HelmRelease filter is set, only resources from that release are included.
-func (p *Preview) Diff(a, b string, out io.Writer) error {
+// If exportDir is provided, the rendered manifests from the target (b) will be
+// written as individual YAML files to the directory.
+func (p *Preview) Diff(a, b string, out io.Writer, exportDir string, exportChangedOnly bool) error {
 	g, _ := errgroup.WithContext(p.ctx)
 	var ar, br *loadRepoResult
 	g.Go(func() error {
@@ -263,7 +265,7 @@ func (p *Preview) Diff(a, b string, out io.Writer) error {
 
 	p.applyOutputOptions(ar.render)
 	p.applyOutputOptions(br.render)
-	if err := diff.Diff(ar.render, br.render, out); err != nil {
+	if err := diff.Diff(ar.render, br.render, out, exportDir, exportChangedOnly); err != nil {
 		return fmt.Errorf("diff error: %w", err)
 	}
 	var allErrors []error

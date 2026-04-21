@@ -33,6 +33,8 @@ var (
 	configFile     string
 	outputFormat   string
 	helmRelease    string
+	exportDir      string
+	exportChanged  bool
 	initConfig     bool
 
 	helmRegistryConfig   string
@@ -67,6 +69,8 @@ func main() {
 	rootCmd.PersistentFlags().StringVar(&helmRegistryConfig, "registry-config", "", "Helm Registry Config")
 	rootCmd.PersistentFlags().StringVar(&helmRepositoryConfig, "repository-config", "", "Helm Repository Config")
 	rootCmd.PersistentFlags().StringVar(&helmRepositoryCache, "repository-cache", "", "Helm Repository Cache")
+	rootCmd.PersistentFlags().StringVar(&exportDir, "export-dir", "", "Export rendered manifests to this directory")
+	rootCmd.PersistentFlags().BoolVar(&exportChanged, "export-changed-only", false, "Only export manifests that have changed")
 
 	renderCmd := &cobra.Command{
 		Use:   "render <path>",
@@ -108,7 +112,7 @@ inputs, use explicit git: or path: prefixes.`,
 		Args: validateDiffArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			log := cliLogger()
-			return runDiff(log, args, os.Stdout)
+			return runDiff(log, args, os.Stdout, exportDir, exportChanged)
 		},
 	}
 	diffCmd.Flags().StringVar(&helmRelease, "hr", "", "Filter diff to a specific HelmRelease by name")
@@ -201,6 +205,12 @@ CLI flags and FMP_* env vars override the config file.`,
 			if v := os.Getenv("FMP_RENDER_HELM"); v != "" {
 				renderHelm = v == "true" || v == "1"
 			}
+			if v := os.Getenv("FMP_EXPORT_DIR"); v != "" {
+				exportDir = v
+			}
+			if v := os.Getenv("FMP_EXPORT_CHANGED_ONLY"); v != "" {
+				exportChanged = v == "true" || v == "1"
+			}
 
 			configRepo := repoA
 			if explicitConfig := os.Getenv("FMP_CONFIG"); explicitConfig != "" {
@@ -221,7 +231,7 @@ CLI flags and FMP_* env vars override the config file.`,
 			if err != nil {
 				return fmt.Errorf("error creating preview: %w", err)
 			}
-			return p.Diff(repoA, repoB, os.Stdout)
+			return p.Diff(repoA, repoB, os.Stdout, exportDir, exportChanged)
 		},
 	}
 	versionCmd := &cobra.Command{
