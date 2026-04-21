@@ -21,7 +21,7 @@ import (
 	"fmt"
 
 	"github.com/go-logr/logr"
-	"sigs.k8s.io/kustomize/api/builtins"
+	"sigs.k8s.io/kustomize/api/builtins" //nolint:staticcheck // api/builtins deprecated but no stable replacement yet
 	kustypes "sigs.k8s.io/kustomize/api/types"
 
 	v2 "github.com/fluxcd/helm-controller/api/v2"

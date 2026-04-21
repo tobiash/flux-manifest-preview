@@ -223,17 +223,17 @@ func (p *Preview) RenderJSON(path string, out io.Writer) error {
 func (p *Preview) Test(path string, out io.Writer) error {
 	result, err := p.loadRepo(path)
 	if err != nil {
-		fmt.Fprintf(out, "FAIL: %v\n", err)
+		_, _ = fmt.Fprintf(out, "FAIL: %v\n", err)
 		return err
 	}
 	if len(result.errors) > 0 {
 		for _, e := range result.errors {
-			fmt.Fprintf(out, "WARN: %v\n", e)
+			_, _ = fmt.Fprintf(out, "WARN: %v\n", e)
 		}
-		fmt.Fprintln(out, "PASS (with warnings)")
+		_, _ = fmt.Fprintln(out, "PASS (with warnings)")
 		return nil
 	}
-	fmt.Fprintln(out, "PASS")
+	_, _ = fmt.Fprintln(out, "PASS")
 	return nil
 }
 
@@ -527,7 +527,7 @@ func (p *Preview) GenerateInitConfig(path, destPath string) error {
 	if err != nil {
 		return fmt.Errorf("creating %s: %w", destPath, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if _, err := fmt.Fprint(f, "# .fmp.yaml — fmp per-repo configuration\n"); err != nil {
 		return err

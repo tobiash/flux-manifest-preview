@@ -394,7 +394,7 @@ func buildOptsWithFilters(log logr.Logger, configRepoPath string, applyFilters b
 			if err != nil {
 				return nil, fmt.Errorf("opening filter file: %w", err)
 			}
-			defer f.Close()
+			defer func() { _ = f.Close() }()
 			opts = append(opts, preview.WithFilterFile(f))
 		} else if filterYAML != "" {
 			opts = append(opts, preview.WithFilterYAML(filterYAML))

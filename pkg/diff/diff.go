@@ -32,14 +32,18 @@ func Diff(a, b *render.Render, w io.Writer) error {
 		r, _ := b.GetByCurrentId(c)
 		yaml := r.MustYaml()
 		edits := myers.ComputeEdits(span.URIFromPath(c.String()), "", yaml)
-		fmt.Fprint(w, gotextdiff.ToUnified(c.String(), c.String(), "", edits))
+		if _, err := fmt.Fprint(w, gotextdiff.ToUnified(c.String(), c.String(), "", edits)); err != nil {
+			return err
+		}
 	}
 
 	for _, d := range deleted {
 		r, _ := a.GetByCurrentId(d)
 		yaml := r.MustYaml()
 		edits := myers.ComputeEdits(span.URIFromPath(d.String()), yaml, "")
-		fmt.Fprint(w, gotextdiff.ToUnified(d.String(), d.String(), yaml, edits))
+		if _, err := fmt.Fprint(w, gotextdiff.ToUnified(d.String(), d.String(), yaml, edits)); err != nil {
+			return err
+		}
 	}
 
 	for _, m := range modified {
@@ -53,7 +57,9 @@ func Diff(a, b *render.Render, w io.Writer) error {
 		}
 
 		edits := myers.ComputeEdits(span.URIFromPath(m.String()), aYaml, bYaml)
-		fmt.Fprint(w, gotextdiff.ToUnified(m.String(), m.String(), aYaml, edits))
+		if _, err := fmt.Fprint(w, gotextdiff.ToUnified(m.String(), m.String(), aYaml, edits)); err != nil {
+			return err
+		}
 	}
 	return nil
 }

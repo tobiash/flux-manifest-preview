@@ -60,7 +60,7 @@ func (e *Expander) Expand(_ context.Context, r *render.Render) (*expander.Expand
 			continue
 		}
 		if ks.Spec.Path == "" {
-			e.log.Error(fmt.Errorf("Kustomization %s/%s has no spec.path", ks.Namespace, ks.Name), "skipping Flux Kustomization", "name", ks.Name)
+			e.log.Error(fmt.Errorf("kustomization %s/%s has no spec.path", ks.Namespace, ks.Name), "skipping Flux Kustomization", "name", ks.Name)
 			continue
 		}
 

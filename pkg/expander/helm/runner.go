@@ -96,7 +96,7 @@ func (r *Runner) RenderCharts(ctx context.Context, releases []RenderTask) (resma
 			}
 			labels["helm.toolkit.fluxcd.io/name"] = chartResult.task.releaseName
 			labels["helm.toolkit.fluxcd.io/namespace"] = chartResult.task.namespace
-			res.SetLabels(labels)
+			_ = res.SetLabels(labels)
 		}
 
 		if err := absorbResMap(res, chartResult.resources, r.logger); err != nil {
@@ -108,7 +108,9 @@ func (r *Runner) RenderCharts(ctx context.Context, releases []RenderTask) (resma
 
 func (r *Runner) renderChart(ctx context.Context, t *RenderTask) (resmap.ResMap, error) {
 	cfg := new(action.Configuration)
-	cfg.Init(r.settings.RESTClientGetter(), t.namespace, os.Getenv("HELM_DRIVER"))
+	if err := cfg.Init(r.settings.RESTClientGetter(), t.namespace, os.Getenv("HELM_DRIVER")); err != nil {
+		return nil, fmt.Errorf("initializing helm configuration: %w", err)
+	}
 
 	install := action.NewInstall(cfg)
 	install.DryRunStrategy = action.DryRunClient
@@ -134,26 +136,26 @@ func (r *Runner) renderChart(ctx context.Context, t *RenderTask) (resmap.ResMap,
 	} else if t.isOCI {
 		// For OCI charts, construct the full reference, skip repo index, and set up a registry client.
 		chartRef = strings.TrimSuffix(t.repo.URL, "/") + "/" + t.chart
-		install.ChartPathOptions.Version = t.version
+		install.Version = t.version
 		regClient, err := registry.NewClient()
 		if err != nil {
 			return nil, fmt.Errorf("creating registry client: %w", err)
 		}
 		install.SetRegistryClient(regClient)
 	} else {
-		install.ChartPathOptions.Version = t.version
-		install.ChartPathOptions.RepoURL = t.repo.URL
-		install.ChartPathOptions.Username = t.repo.Username
-		install.ChartPathOptions.Password = t.repo.Password
-		install.ChartPathOptions.CaFile = t.repo.CAFile
-		install.ChartPathOptions.CertFile = t.repo.CertFile
-		install.ChartPathOptions.InsecureSkipTLSVerify = t.repo.InsecureSkipTLSVerify
-		install.ChartPathOptions.PassCredentialsAll = t.repo.PassCredentialsAll
-		install.ChartPathOptions.KeyFile = t.repo.KeyFile
+		install.Version = t.version
+		install.RepoURL = t.repo.URL
+		install.Username = t.repo.Username
+		install.Password = t.repo.Password
+		install.CaFile = t.repo.CAFile
+		install.CertFile = t.repo.CertFile
+		install.InsecureSkipTLSVerify = t.repo.InsecureSkipTLSVerify
+		install.PassCredentialsAll = t.repo.PassCredentialsAll
+		install.KeyFile = t.repo.KeyFile
 		chartRef = t.chart
 	}
 	if chart == nil {
-		cp, err := install.ChartPathOptions.LocateChart(chartRef, r.settings)
+		cp, err := install.LocateChart(chartRef, r.settings)
 		if err != nil {
 			return nil, fmt.Errorf("error locating chart: %w", err)
 		}
@@ -228,7 +230,9 @@ func parseManifests(data []byte, log logr.Logger) (resmap.ResMap, error) {
 		if err := enc.Encode(doc); err != nil {
 			return nil, fmt.Errorf("encoding manifest: %w", err)
 		}
-		enc.Close()
+		if err := enc.Close(); err != nil {
+			return nil, fmt.Errorf("closing encoder: %w", err)
+		}
 		if buf.Len() == 0 {
 			continue
 		}
@@ -251,7 +255,7 @@ func absorbResMap(dst, src resmap.ResMap, log logr.Logger) error {
 		id := r.CurId()
 		if existing, err := dst.GetById(id); err == nil {
 			// Duplicate: remove old and add new.
-			dst.Remove(existing.CurId())
+			_ = dst.Remove(existing.CurId())
 			log.V(1).Info("replacing duplicate resource", "id", id)
 		}
 		if err := dst.Append(r); err != nil {

@@ -55,7 +55,7 @@ func DecryptResources(rm resmap.ResMap) error {
 
 		decryptedRes := decryptedResources[0]
 		origId := res.CurId()
-		rm.Remove(origId)
+		_ = rm.Remove(origId)
 		if err := rm.Append(decryptedRes); err != nil {
 			return fmt.Errorf("replacing decrypted SOPS secret %s: %w", origId, err)
 		}

@@ -1,6 +1,7 @@
 package fluxks
 
 import (
+	"context"
 	"testing"
 
 	"github.com/go-logr/logr"
@@ -26,7 +27,7 @@ spec:
 `)
 
 	exp := NewExpander(logr.Discard())
-	result, err := exp.Expand(nil, r)
+	result, err := exp.Expand(context.TODO(), r)
 	if err != nil {
 		t.Fatalf("Expand() error = %v", err)
 	}
@@ -60,7 +61,7 @@ spec:
 `)
 
 	exp := NewExpanderWithResolver(logr.Discard(), stubResolver{"flux-system/flux-system": "/tmp/source"})
-	result, err := exp.Expand(nil, r)
+	result, err := exp.Expand(context.TODO(), r)
 	if err != nil {
 		t.Fatalf("Expand() error = %v", err)
 	}

@@ -17,7 +17,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -342,12 +341,4 @@ func (s *expandState) convertResource(res *resource.Resource, to any) error {
 	var u unstructured.Unstructured
 	u.SetUnstructuredContent(m)
 	return s.scheme.Convert(&u, to, nil)
-}
-
-func (s *expandState) findResource(gvk resid.Gvk, namespacedName types.NamespacedName, to any) (bool, error) {
-	res, err := s.render.GetById(resid.NewResIdWithNamespace(gvk, namespacedName.Name, namespacedName.Namespace))
-	if err != nil {
-		return false, nil
-	}
-	return true, s.convertResource(res, to)
 }

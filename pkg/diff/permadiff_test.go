@@ -4,12 +4,6 @@ import (
 	"bytes"
 	"strings"
 	"testing"
-
-	"github.com/go-logr/logr"
-	"github.com/tobiash/flux-manifest-preview/pkg/render"
-	"sigs.k8s.io/kustomize/api/hasher"
-	"sigs.k8s.io/kustomize/api/resmap"
-	"sigs.k8s.io/kustomize/api/resource"
 )
 
 func TestDetectPermadiffs_TLSecretDataDiff(t *testing.T) {
@@ -408,20 +402,4 @@ data:
 	if !strings.Contains(configStr, "ca.crt") {
 		t.Error("expected specific key ca.crt in config")
 	}
-}
-
-func makePermDiffRender(t *testing.T, y string) *render.Render {
-	t.Helper()
-	r := render.NewDefaultRender(logr.Discard())
-	resFactory := resource.NewFactory(&hasher.Hasher{})
-	rmFactory := resmap.NewFactory(resFactory)
-
-	rm, err := rmFactory.NewResMapFromBytes([]byte(y))
-	if err != nil {
-		t.Fatalf("failed to create resmap: %v", err)
-	}
-	if err := r.AbsorbAll(rm); err != nil {
-		t.Fatalf("failed to absorb: %v", err)
-	}
-	return r
 }

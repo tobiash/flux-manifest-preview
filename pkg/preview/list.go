@@ -111,37 +111,37 @@ func matchListGVK(a, b resid.Gvk) bool {
 // PrintKustomizations writes a table of Flux Kustomizations to out.
 func PrintKustomizations(ks []KustomizationInfo, out io.Writer) {
 	if len(ks) == 0 {
-		fmt.Fprintln(out, "No Kustomizations found.")
+		_, _ = fmt.Fprintln(out, "No Kustomizations found.")
 		return
 	}
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tNAMESPACE\tPATH\tSOURCE")
+	_, _ = fmt.Fprintln(tw, "NAME\tNAMESPACE\tPATH\tSOURCE")
 	for _, k := range ks {
 		src := k.SourceKind + "/" + k.SourceName
 		if src == "/" {
 			src = "-"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", k.Name, k.Namespace, k.Path, src)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", k.Name, k.Namespace, k.Path, src)
 	}
-	tw.Flush()
+	_ = tw.Flush()
 }
 
 // PrintHelmReleases writes a table of HelmReleases to out.
 func PrintHelmReleases(hrs []HelmReleaseInfo, out io.Writer) {
 	if len(hrs) == 0 {
-		fmt.Fprintln(out, "No HelmReleases found.")
+		_, _ = fmt.Fprintln(out, "No HelmReleases found.")
 		return
 	}
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tNAMESPACE\tCHART\tVERSION\tSOURCE")
+	_, _ = fmt.Fprintln(tw, "NAME\tNAMESPACE\tCHART\tVERSION\tSOURCE")
 	for _, hr := range hrs {
 		src := hr.SourceKind + "/" + hr.SourceName
 		if src == "/" {
 			src = "-"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", hr.Name, hr.Namespace, hr.Chart, hr.Version, src)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", hr.Name, hr.Namespace, hr.Chart, hr.Version, src)
 	}
-	tw.Flush()
+	_ = tw.Flush()
 }
 
 func listNestedStr(m map[string]any, keys ...string) string {

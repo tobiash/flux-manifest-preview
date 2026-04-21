@@ -89,7 +89,9 @@ func GenerateFilterConfig(diffs []FieldDiff) ([]byte, error) {
 	if err := enc.Encode(cfg); err != nil {
 		return nil, fmt.Errorf("encoding filter config: %w", err)
 	}
-	enc.Close()
+	if err := enc.Close(); err != nil {
+		return nil, fmt.Errorf("closing encoder: %w", err)
+	}
 	return []byte(buf.String()), nil
 }
 
@@ -143,9 +145,7 @@ func findDifferences(a, b map[string]any, prefix []string) []fieldDiffEntry {
 			if len(subDiffs) == 0 {
 				continue
 			}
-			for _, sd := range subDiffs {
-				diffs = append(diffs, sd)
-			}
+			diffs = append(diffs, subDiffs...)
 			continue
 		}
 

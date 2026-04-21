@@ -106,7 +106,7 @@ func (r *Render) absorbResMap(source, producer string, src resmap.ResMap) error 
 			if existingProducer == "" {
 				existingProducer = producerForResource(existing, "existing resources")
 			}
-			r.Remove(existing.CurId())
+			_ = r.Remove(existing.CurId())
 			r.warnings = append(r.warnings, duplicateWarning(id.String(), existingProducer, newProducer, source))
 			r.log.V(1).Info("replacing duplicate resource", "id", id)
 		}
@@ -244,7 +244,7 @@ func (r *Render) Sort() {
 func (r *Render) FilterByLabel(key, value string) {
 	for _, res := range r.Resources() {
 		if res.GetLabels()[key] != value {
-			r.Remove(res.CurId())
+			_ = r.Remove(res.CurId())
 		}
 	}
 }
@@ -253,7 +253,7 @@ func (r *Render) FilterByLabel(key, value string) {
 func (r *Render) FilterCRDs() {
 	for _, res := range r.Resources() {
 		if res.GetKind() == "CustomResourceDefinition" {
-			r.Remove(res.CurId())
+			_ = r.Remove(res.CurId())
 		}
 	}
 }
@@ -265,7 +265,7 @@ func (r *Render) ApplyNamespaceToNew(count int, namespace string) {
 	for _, res := range r.Resources()[count:] {
 		oldID := res.CurId().String()
 		if !res.GetGvk().IsClusterScoped() && res.GetNamespace() == "" {
-			res.SetNamespace(namespace)
+			_ = res.SetNamespace(namespace)
 			if producer, ok := r.provenance[oldID]; ok {
 				delete(r.provenance, oldID)
 				r.provenance[res.CurId().String()] = producer

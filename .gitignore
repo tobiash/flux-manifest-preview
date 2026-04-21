@@ -37,4 +37,7 @@
 
 # Skill packs
 skills/
-skills-lock.json/fmp
+skills-lock.json
+
+# Binary built in repo root
+/fmp

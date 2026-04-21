@@ -41,7 +41,7 @@ spec:
   url: ssh://git@github.com/tobiash/kube.git
 `)
 
-	if _, err := exp.WithSourceRoot(repo).Expand(nil, r); err != nil {
+	if _, err := exp.WithSourceRoot(repo).Expand(context.TODO(), r); err != nil {
 		t.Fatalf("Expand() error = %v", err)
 	}
 
@@ -51,7 +51,7 @@ spec:
 	}
 
 	scoped := exp.WithSourceRoot(repo)
-	if _, err := scoped.Expand(nil, r); err != nil {
+	if _, err := scoped.Expand(context.TODO(), r); err != nil {
 		t.Fatalf("Expand() error = %v", err)
 	}
 	path, ok = scoped.ResolvePath("flux-system", "flux-system")
@@ -100,7 +100,7 @@ spec:
 		wg.Add(1)
 		go func(scoped *Expander) {
 			defer wg.Done()
-			_, err := scoped.Expand(nil, r)
+			_, err := scoped.Expand(context.TODO(), r)
 			errCh <- err
 		}(scoped)
 	}

@@ -85,7 +85,7 @@ func NewExpander(log logr.Logger) (*Expander, error) {
 		log: log,
 		shared: &sharedState{
 			cloneDir: tmpDir,
-			cleanup:  func() { os.RemoveAll(tmpDir) },
+			cleanup:  func() { _ = os.RemoveAll(tmpDir) },
 			clones: cloneCache{
 				paths: make(map[string]string),
 			},
