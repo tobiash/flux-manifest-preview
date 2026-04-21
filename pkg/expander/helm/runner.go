@@ -3,22 +3,18 @@ package helm
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 	"sync"
 
-	"github.com/Masterminds/semver/v3"
 	"github.com/go-logr/logr"
 	"helm.sh/helm/v4/pkg/action"
 	chartcommon "helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
 	helmcli "helm.sh/helm/v4/pkg/cli"
-	"helm.sh/helm/v4/pkg/getter"
 	"helm.sh/helm/v4/pkg/postrenderer"
 	"helm.sh/helm/v4/pkg/registry"
 	ri "helm.sh/helm/v4/pkg/release"
@@ -34,9 +30,6 @@ import (
 type Runner struct {
 	settings *helmcli.EnvSettings
 	logger   logr.Logger
-	storage  repo.File
-	lock     sync.Mutex
-	repos    sync.Map
 }
 
 type RenderTask struct {
@@ -148,9 +141,6 @@ func (r *Runner) renderChart(ctx context.Context, t *RenderTask) (resmap.ResMap,
 		}
 		install.SetRegistryClient(regClient)
 	} else {
-		if err := r.getAndUpdateRepo(&t.repo); err != nil {
-			return nil, err
-		}
 		install.ChartPathOptions.Version = t.version
 		install.ChartPathOptions.RepoURL = t.repo.URL
 		install.ChartPathOptions.Username = t.repo.Username
@@ -269,101 +259,4 @@ func absorbResMap(dst, src resmap.ResMap, log logr.Logger) error {
 		}
 	}
 	return nil
-}
-
-func (r *Runner) getAndUpdateRepo(entry *repo.Entry) error {
-	_, ok := r.repos.Load(entry.URL)
-	if ok {
-		return nil
-	}
-
-	r.lock.Lock()
-	defer r.lock.Unlock()
-	_, ok = r.repos.Load(entry.URL)
-	if ok {
-		return nil
-	}
-
-	chartRepo, err := repo.NewChartRepository(entry, getter.All(r.settings))
-	if err != nil {
-		return err
-	}
-	chartRepo.CachePath = r.settings.RepositoryCache
-	_, err = chartRepo.DownloadIndexFile()
-	if err != nil {
-		return err
-	}
-	if r.storage.Has(entry.Name) {
-		return nil
-	}
-	r.storage.Update(entry)
-	err = r.storage.WriteFile(r.settings.RepositoryConfig, 0o644)
-	if err != nil {
-		return err
-	}
-	r.repos.Store(entry.URL, true)
-	return nil
-}
-
-// ResolveVersion resolves a potentially semver-range version string to a
-// concrete version by loading the repo index and finding the latest match.
-// If the version is already concrete (not a range), it is returned as-is.
-func (r *Runner) ResolveVersion(repoURL, chart, version string) (string, error) {
-	// If it looks like a plain version, return it directly.
-	if isPlainVersion(version) {
-		return version, nil
-	}
-
-	// Load the cached index file.
-	idxFile := r.settings.RepositoryCache + "/" + fmt.Sprintf("%x.index.yaml", sha256hex(repoURL))
-	data, err := os.ReadFile(idxFile)
-	if err != nil {
-		return version, nil // fallback to the raw version string
-	}
-
-	var idx repo.IndexFile
-	if err := yaml.Unmarshal(data, &idx); err != nil {
-		return version, nil
-	}
-
-	chartVersions, ok := idx.Entries[chart]
-	if !ok || len(chartVersions) == 0 {
-		return version, nil
-	}
-
-	constraint, err := semver.NewConstraint(version)
-	if err != nil {
-		return version, nil // not a valid constraint, use as-is
-	}
-
-	for _, cv := range chartVersions {
-		v, err := semver.NewVersion(cv.Version)
-		if err != nil {
-			continue
-		}
-		if constraint.Check(v) {
-			return v.String(), nil
-		}
-	}
-
-	return "", fmt.Errorf("no version of %s matches constraint %s", chart, version)
-}
-
-// isPlainVersion returns true if the version looks like a concrete semver
-// rather than a range constraint. Ranges typically start with operators
-// like >=, <=, >, <, ^, ~, or contain || for unions.
-func isPlainVersion(version string) bool {
-	if version == "" || version == "*" || version == "latest" {
-		return true
-	}
-	// If it parses as a strict semver, it's plain.
-	if _, err := semver.StrictNewVersion(version); err == nil {
-		return true
-	}
-	return false
-}
-
-func sha256hex(s string) string {
-	h := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(h[:])
 }

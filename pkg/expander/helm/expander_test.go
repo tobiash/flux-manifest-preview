@@ -169,10 +169,6 @@ func (s stubChartSourceResolver) ResolvePath(namespace, name string) (string, bo
 	return path, ok
 }
 
-func (s *stubChartRunner) ResolveVersion(_, _, version string) (string, error) {
-	return version, nil
-}
-
 func (s *stubChartRunner) RenderCharts(_ context.Context, tasks []RenderTask) (resmap.ResMap, []error, error) {
 	s.tasks = append([]RenderTask(nil), tasks...)
 	return resmap.New(), nil, nil
