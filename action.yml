@@ -93,6 +93,12 @@ runs:
           echo "::warning::repo-a/repo-b inputs are deprecated; use repo and base-ref instead"
           export FMP_REPO_A="${{ inputs.repo-a }}"
           export FMP_REPO_B="${{ inputs.repo-b }}"
+          if [[ -n "${{ inputs.kustomizations }}" ]]; then
+            export FMP_KUSTOMIZATIONS="${{ inputs.kustomizations }}"
+          fi
+          if [[ -n "${{ inputs.helm }}" ]]; then
+            export FMP_RENDER_HELM="${{ inputs.helm }}"
+          fi
           DIFF=$(fmp ci)
           echo "$DIFF"
           {
