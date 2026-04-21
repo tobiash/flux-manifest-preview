@@ -23,6 +23,11 @@ import (
 
 var gitRepoGVK = resid.NewGvk("source.toolkit.fluxcd.io", "v1", "GitRepository")
 
+type cloneClient interface {
+	Clone(ctx context.Context, url string, cfg gitrepository.CloneConfig) (*fluxgit.Commit, error)
+	Close()
+}
+
 // Expander discovers GitRepository resources, clones external repos to temp
 // directories, and makes their paths available for the expansion loop.
 type Expander struct {
@@ -48,6 +53,15 @@ type cloneCache struct {
 const sourceRepoURLsFile = ".fmp-source-repo-urls"
 
 var gitCloneFunc = gitClone
+
+var newCloneClient = func(dest string, authOpts *fluxgit.AuthOptions) (cloneClient, error) {
+	return fluxgogit.NewClient(
+		dest,
+		authOpts,
+		fluxgogit.WithDiskStorage(),
+		fluxgogit.WithFallbackToDefaultKnownHosts(),
+	)
+}
 
 // WriteSourceRepoURLs writes normalized source-repo aliases for a materialized tree.
 // This lets archived git revision snapshots resolve self-referential GitRepository URLs.
@@ -278,7 +292,7 @@ func gitClone(ctx context.Context, rawURL, dest string, cloneCfg gitrepository.C
 	if err != nil {
 		return err
 	}
-	client, err := fluxgogit.NewClient(dest, authOpts, fluxgogit.WithFallbackToDefaultKnownHosts())
+	client, err := newCloneClient(dest, authOpts)
 	if err != nil {
 		return fmt.Errorf("creating git client for %s: %w", rawURL, err)
 	}

@@ -2,14 +2,17 @@ package gitrepo
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	fluxgit "github.com/fluxcd/pkg/git"
 	gitrepository "github.com/fluxcd/pkg/git/repository"
 	"github.com/go-logr/logr"
 	"github.com/tobiash/flux-manifest-preview/pkg/render"
@@ -198,6 +201,50 @@ func TestCloneConfigForSpec_MapsReferenceFields(t *testing.T) {
 	}
 }
 
+func TestGitClone_UsesConfiguredClientFactory(t *testing.T) {
+	originalFactory := newCloneClient
+	defer func() { newCloneClient = originalFactory }()
+
+	stub := &stubCloneClient{}
+	newCloneClient = func(dest string, authOpts *fluxgit.AuthOptions) (cloneClient, error) {
+		if dest == "" {
+			t.Fatal("expected destination path")
+		}
+		if authOpts == nil {
+			t.Fatal("expected auth options")
+		}
+		return stub, nil
+	}
+
+	cloneCfg := gitrepository.CloneConfig{CheckoutStrategy: gitrepository.CheckoutStrategy{Branch: "main"}}
+	if err := gitClone(context.Background(), "https://github.com/example/app", t.TempDir(), cloneCfg); err != nil {
+		t.Fatalf("gitClone() error = %v", err)
+	}
+	if !stub.closed {
+		t.Fatal("expected clone client to be closed")
+	}
+	if got, want := stub.url, "https://github.com/example/app"; got != want {
+		t.Fatalf("Clone url = %q, want %q", got, want)
+	}
+	if got, want := stub.cfg.Branch, "main"; got != want {
+		t.Fatalf("Clone branch = %q, want %q", got, want)
+	}
+}
+
+func TestGitClone_PropagatesClientCreationErrors(t *testing.T) {
+	originalFactory := newCloneClient
+	defer func() { newCloneClient = originalFactory }()
+
+	newCloneClient = func(string, *fluxgit.AuthOptions) (cloneClient, error) {
+		return nil, errors.New("boom")
+	}
+
+	err := gitClone(context.Background(), "https://github.com/example/app", t.TempDir(), gitrepository.CloneConfig{})
+	if err == nil || !strings.Contains(err.Error(), "creating git client") {
+		t.Fatalf("gitClone() error = %v, want client creation error", err)
+	}
+}
+
 func newRenderFromYAML(t *testing.T, yaml string) *render.Render {
 	t.Helper()
 	r := render.NewDefaultRender(logr.Discard())
@@ -218,4 +265,20 @@ func gitRun(t *testing.T, repo string, args ...string) {
 	if out, err := exec.Command("git", cmdArgs...).CombinedOutput(); err != nil {
 		t.Fatalf("git %v failed: %v\n%s", args, err, string(out))
 	}
+}
+
+type stubCloneClient struct {
+	url    string
+	cfg    gitrepository.CloneConfig
+	closed bool
+}
+
+func (s *stubCloneClient) Clone(_ context.Context, url string, cfg gitrepository.CloneConfig) (*fluxgit.Commit, error) {
+	s.url = url
+	s.cfg = cfg
+	return nil, nil
+}
+
+func (s *stubCloneClient) Close() {
+	s.closed = true
 }
