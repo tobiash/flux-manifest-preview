@@ -195,17 +195,53 @@ fmp -v diff
 
 ## GitHub Action
 
-This repository also includes a composite GitHub Action that wraps `fmp ci`.
+This repository includes a composite GitHub Action that runs `fmp diff` against a PR branch.
 
-The action accepts:
-- `repo-a`
-- `repo-b`
-- `helm`
-- `kustomizations`
-- `filter`
-- `config`
+### PR review workflow (recommended)
 
-Its output is a unified diff string exposed as `diff`.
+```yaml
+- uses: actions/checkout@v4
+  with:
+    fetch-depth: 0  # full history needed for git-aware diff
+
+- uses: tobiash/flux-manifest-preview@main
+  with:
+    repo: .
+    base-ref: origin/main
+    resolve-git: true
+```
+
+The action renders both the base ref and the PR worktree, then outputs a unified diff.
+
+### Legacy two-checkout workflow
+
+The older `repo-a`/`repo-b` inputs still work but are deprecated:
+
+```yaml
+- uses: tobiash/flux-manifest-preview@main
+  with:
+    repo-a: ${{ steps.checkout-base.outputs.path }}
+    repo-b: .
+```
+
+### Inputs
+
+| Input | Description | Default |
+|-------|-------------|---------|
+| `repo` | Path to the repo checkout (must be a git worktree) | `.` |
+| `base-ref` | Git ref to diff against | auto-detects `origin/main` |
+| `helm` | Enable Helm rendering | `true` |
+| `resolve-git` | Clone external GitRepository sources | `false` |
+| `sort` | Sort output for deterministic diffs | `false` |
+| `exclude-crds` | Strip CRDs from output | `false` |
+| `config` | Explicit `.fmp.yaml` path | auto-discovered |
+| `filter` | KIO filter YAML (overrides `.fmp.yaml`) | |
+
+### Outputs
+
+| Output | Description |
+|--------|-------------|
+| `diff` | Unified diff of rendered manifests |
 
 ## Notes
 

@@ -1,26 +1,49 @@
 name: 'Flux Manifest Preview'
 description: 'Render and diff Flux GitOps manifests'
 inputs:
-  repo-a:
-    description: Path to the base repository checkout
-    required: true
-  repo-b:
-    description: Path to the target repository checkout
-    required: true
+  repo:
+    description: Path to the repository checkout (must be a git worktree with full history)
+    required: false
+    default: '.'
+  base-ref:
+    description: Git ref to diff against (e.g. origin/main, HEAD~1). Defaults to origin/main or main.
+    required: false
+    default: ''
   helm:
     description: Enable Helm rendering
     required: false
     default: 'true'
-  kustomizations:
-    description: Kustomize bases to render (newline-separated, relative to repo path)
+  resolve-git:
+    description: Clone and follow external GitRepository sources
     required: false
-    default: ''
+    default: 'false'
   filter:
     description: KIO filters to apply to rendered YAML (overrides .fmp.yaml filters)
     required: false
     default: ''
   config:
     description: Path to an explicit .fmp.yaml config file (overrides auto-discovery)
+    required: false
+    default: ''
+  sort:
+    description: Sort output for deterministic diffs
+    required: false
+    default: 'false'
+  exclude-crds:
+    description: Strip CustomResourceDefinitions from output
+    required: false
+    default: 'false'
+  # Legacy inputs for backward compatibility with the two-checkout workflow
+  repo-a:
+    description: '(Legacy) Path to the base repository checkout'
+    required: false
+    default: ''
+  repo-b:
+    description: '(Legacy) Path to the target repository checkout'
+    required: false
+    default: ''
+  kustomizations:
+    description: '(Legacy) Kustomize bases to render (newline-separated, relative to repo path)'
     required: false
     default: ''
 outputs:
@@ -53,7 +76,7 @@ runs:
         else
           echo "::group::Build fmp from source ($REF)"
           cd "${{ github.action_path }}"
-          go build -o "$RUNNER_TOOL_CACHE/fmp/fmp" ./cmd/fmp
+          go build -ldflags="-s -w" -trimpath -o "$RUNNER_TOOL_CACHE/fmp/fmp" ./cmd/fmp
           chmod +x "$RUNNER_TOOL_CACHE/fmp/fmp"
           echo "::endgroup::"
         fi
@@ -64,17 +87,65 @@ runs:
       id: fmp
       shell: bash
       run: |
-        DIFF=$(fmp ci)
+        set -euo pipefail
+
+        if [[ -n "${{ inputs.repo-a }}" && -n "${{ inputs.repo-b }}" ]]; then
+          echo "::warning::repo-a/repo-b inputs are deprecated; use repo and base-ref instead"
+          DIFF=$(fmp ci)
+          echo "$DIFF"
+          {
+            echo "diff<<EOF"
+            echo "$DIFF"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        REPO="${{ inputs.repo }}"
+        BASE_REF="${{ inputs.base-ref }}"
+
+        cd "$REPO"
+
+        if [[ -z "$BASE_REF" ]]; then
+          if git rev-parse --verify --quiet "origin/main" >/dev/null 2>&1; then
+            BASE_REF="origin/main"
+          elif git rev-parse --verify --quiet "main" >/dev/null 2>&1; then
+            BASE_REF="main"
+          else
+            echo "::error::No base-ref specified and could not find main branch"
+            exit 1
+          fi
+        fi
+
+        FMP_ARGS=("diff" "$BASE_REF")
+
+        if [[ "${{ inputs.helm }}" == "true" ]]; then
+          FMP_ARGS+=("--render-helm")
+        fi
+        if [[ "${{ inputs.resolve-git }}" == "true" ]]; then
+          FMP_ARGS+=("--resolve-git")
+        fi
+        if [[ -n "${{ inputs.config }}" ]]; then
+          FMP_ARGS+=("--filter" "${{ inputs.config }}")
+        fi
+        if [[ "${{ inputs.sort }}" == "true" ]]; then
+          FMP_ARGS+=("--sort")
+        fi
+        if [[ "${{ inputs.exclude-crds }}" == "true" ]]; then
+          FMP_ARGS+=("--exclude-crds")
+        fi
+
+        echo "::group::fmp diff ${FMP_ARGS[*]}"
+        DIFF=$(fmp "${FMP_ARGS[@]}" 2>&1) || true
+        echo "::endgroup::"
+
         echo "$DIFF"
         {
           echo "diff<<EOF"
           echo "$DIFF"
           echo "EOF"
         } >> "$GITHUB_OUTPUT"
-      env:
-        FMP_REPO_A: ${{ inputs.repo-a }}
-        FMP_REPO_B: ${{ inputs.repo-b }}
-        FMP_RENDER_HELM: ${{ inputs.helm }}
-        FMP_KUSTOMIZATIONS: ${{ inputs.kustomizations }}
-        FMP_FILTER: ${{ inputs.filter }}
-        FMP_CONFIG: ${{ inputs.config }}
+
+        if echo "$DIFF" | rg -q '^ERROR:'; then
+          exit 1
+        fi
