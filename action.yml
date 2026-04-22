@@ -33,6 +33,14 @@ inputs:
     description: Strip CustomResourceDefinitions from output
     required: false
     default: 'false'
+  post-comment:
+    description: 'Post/update a comment on the Pull Request with the diff summary'
+    required: false
+    default: 'false'
+  github-token:
+    description: 'GitHub token for posting comments'
+    required: false
+    default: ${{ github.token }}
   # Legacy inputs for backward compatibility with the two-checkout workflow
   repo-a:
     description: '(Legacy) Path to the base repository checkout'
@@ -60,6 +68,7 @@ runs:
         mkdir -p "$RUNNER_TOOL_CACHE/fmp"
 
         REF="${{ github.action_ref }}"
+        BUILD_FROM_SOURCE=false
 
         if [[ "$REF" == v* ]]; then
           echo "::group::Download fmp $REF"
@@ -70,10 +79,23 @@ runs:
             *) echo "Unsupported architecture: $ARCH" && exit 1 ;;
           esac
           URL="https://github.com/tobiash/flux-manifest-preview/releases/download/${REF}/fmp_${REF}_linux_${ARCH}.tar.gz"
-          curl -fsSL "$URL" | tar -xz -C "$RUNNER_TOOL_CACHE/fmp" fmp
-          chmod +x "$RUNNER_TOOL_CACHE/fmp/fmp"
-          echo "::endgroup::"
+          
+          if curl -fsSL --fail "$URL" -o fmp.tar.gz; then
+            tar -xzf fmp.tar.gz -C "$RUNNER_TOOL_CACHE/fmp" fmp
+            chmod +x "$RUNNER_TOOL_CACHE/fmp/fmp"
+            rm fmp.tar.gz
+            echo "Successfully downloaded fmp from $URL"
+            echo "::endgroup::"
+          else
+            echo "Failed to download fmp from $URL, falling back to build from source"
+            echo "::endgroup::"
+            BUILD_FROM_SOURCE=true
+          fi
         else
+          BUILD_FROM_SOURCE=true
+        fi
+
+        if [[ "$BUILD_FROM_SOURCE" == "true" ]]; then
           echo "::group::Build fmp from source ($REF)"
           cd "${{ github.action_path }}"
           go build -ldflags="-s -w" -trimpath -o "$RUNNER_TOOL_CACHE/fmp/fmp" ./cmd/fmp
@@ -157,3 +179,92 @@ runs:
         if echo "$DIFF" | rg -q '^ERROR:'; then
           exit 1
         fi
+
+    - name: Process Diff
+      id: process-diff
+      shell: bash
+      env:
+        DIFF: ${{ steps.fmp.outputs.diff }}
+      run: |
+        # Calculate summary
+        PLUS_LINES=$(echo "$DIFF" | grep -c '^+[^+]' || true)
+        MINUS_LINES=$(echo "$DIFF" | grep -c '^-[^-]' || true)
+
+        SUMMARY="### 📊 Flux Manifest Preview Summary"
+        SUMMARY="$SUMMARY"$'\n'"- **Lines Added:** $PLUS_LINES"
+        SUMMARY="$SUMMARY"$'\n'"- **Lines Removed:** $MINUS_LINES"
+
+        MAX_LEN=60000
+        TRUNCATED=false
+        if [ ${#DIFF} -gt $MAX_LEN ]; then
+          DIFF_DISPLAY="${DIFF:0:$MAX_LEN}"
+          DIFF_DISPLAY="$DIFF_DISPLAY"$'\n'"... (diff truncated, too large for GitHub comment)"
+          TRUNCATED=true
+        else
+          DIFF_DISPLAY="$DIFF"
+        fi
+
+        if [ -n "$DIFF" ]; then
+          MARKDOWN="$SUMMARY"
+          MARKDOWN="$MARKDOWN"$'\n\n'"<details>"
+          MARKDOWN="$MARKDOWN"$'\n'"<summary>View Diff</summary>"
+          MARKDOWN="$MARKDOWN"$'\n\n'"\`\`\`diff"
+          MARKDOWN="$MARKDOWN"$'\n'"$DIFF_DISPLAY"
+          MARKDOWN="$MARKDOWN"$'\n'"\`\`\`"
+          MARKDOWN="$MARKDOWN"$'\n\n'"</details>"
+        else
+          MARKDOWN="$SUMMARY"
+          MARKDOWN="$MARKDOWN"$'\n\n'"*No manifest changes detected.*"
+        fi
+
+        # Use a marker to identify the comment
+        MARKDOWN="$MARKDOWN"$'\n\n'"<!-- fmp-comment-marker -->"
+
+        # Set outputs
+        {
+          echo "markdown<<EOF"
+          echo "$MARKDOWN"
+          echo "EOF"
+          echo "truncated=$TRUNCATED"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Step Summary
+      shell: bash
+      run: |
+        echo "${{ steps.process-diff.outputs.markdown }}" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Post PR Comment
+      if: ${{ inputs.post-comment == 'true' && github.event_name == 'pull_request' }}
+      uses: actions/github-script@v6
+      env:
+        MARKDOWN: ${{ steps.process-diff.outputs.markdown }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const body = process.env.MARKDOWN;
+          const issue_number = context.issue.number;
+          const { owner, repo } = context.repo;
+
+          const comments = await github.rest.issues.listComments({
+            owner,
+            repo,
+            issue_number,
+          });
+
+          const botComment = comments.data.find(comment => comment.body.includes('<!-- fmp-comment-marker -->'));
+
+          if (botComment) {
+            await github.rest.issues.updateComment({
+              owner,
+              repo,
+              comment_id: botComment.id,
+              body,
+            });
+          } else {
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number,
+              body,
+            });
+          }
