@@ -5,6 +5,17 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    paths:
+      - 'action.yml'
+      - '.github/workflows/test-action.yml'
+      - 'tests/action/**'
+
+concurrency:
+  group: action-integration-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   test-source-build:

@@ -1,0 +1,68 @@
+name: Full Validation
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: full-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify formatting
+        run: |
+          if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+            echo "Unformatted files:"
+            gofmt -s -l .
+            exit 1
+          fi
+      - name: Verify go mod tidy
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+      - name: Run go vet
+        run: go vet ./...
+      - name: Run race tests
+        run: go test -race ./...
+      - name: Cross-compile Linux arm64
+        run: GOOS=linux GOARCH=arm64 go build -o /dev/null ./cmd/fmp
+
+  security:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.11.4
+          args: --timeout=5m
+      - name: Cache govulncheck DB
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/govulncheck
+          key: govulncheck-db-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: govulncheck-db-${{ runner.os }}-
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: Run govulncheck
+        run: govulncheck ./...
