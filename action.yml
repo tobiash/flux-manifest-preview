@@ -33,6 +33,14 @@ inputs:
     description: Strip CustomResourceDefinitions from output
     required: false
     default: 'false'
+  export-dir:
+    description: 'Export rendered manifests to this directory'
+    required: false
+    default: ''
+  export-changed-only:
+    description: 'Only export manifests that have changed'
+    required: false
+    default: 'false'
   # Legacy inputs for backward compatibility with the two-checkout workflow
   repo-a:
     description: '(Legacy) Path to the base repository checkout'
@@ -99,6 +107,12 @@ runs:
           if [[ -n "${{ inputs.helm }}" ]]; then
             export FMP_RENDER_HELM="${{ inputs.helm }}"
           fi
+          if [[ -n "${{ inputs.export-dir }}" ]]; then
+            export FMP_EXPORT_DIR="${{ inputs.export-dir }}"
+          fi
+          if [[ "${{ inputs.export-changed-only }}" == "true" ]]; then
+            export FMP_EXPORT_CHANGED_ONLY="true"
+          fi
           DIFF=$(fmp ci)
           echo "$DIFF"
           {
@@ -141,6 +155,12 @@ runs:
         fi
         if [[ "${{ inputs.exclude-crds }}" == "true" ]]; then
           FMP_ARGS+=("--exclude-crds")
+        fi
+        if [[ -n "${{ inputs.export-dir }}" ]]; then
+          FMP_ARGS+=("--export-dir" "${{ inputs.export-dir }}")
+        fi
+        if [[ "${{ inputs.export-changed-only }}" == "true" ]]; then
+          FMP_ARGS+=("--export-changed-only")
         fi
 
         echo "::group::fmp diff ${FMP_ARGS[*]}"
