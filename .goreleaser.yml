@@ -37,3 +37,4 @@ release:
   github:
     owner: tobiash
     name: flux-manifest-preview
+  prerelease: auto
