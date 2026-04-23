@@ -1,5 +1,7 @@
 version: 2
 
+dist: .goreleaser-dist
+
 builds:
   - id: fmp
     main: ./cmd/fmp
