@@ -151,18 +151,72 @@ Use `fmp` in your CI/CD pipelines to review PRs automatically.
 | :--- | :--- | :--- |
 | `repo` | Path to the repo checkout (must be a git worktree) | `.` |
 | `base-ref` | Git ref to diff against | `origin/main` |
+| `base-sha` | Exact SHA to diff against (overrides `base-ref`) | |
+| `paths` | Directories to render (newline-separated) | |
+| `recursive` | Recursively discover paths | `false` |
 | `helm` | Enable Helm rendering | `true` |
 | `resolve-git` | Clone external GitRepository sources | `false` |
 | `sort` | Sort output for deterministic diffs | `false` |
 | `exclude-crds` | Strip CRDs from output | `false` |
+| `helm-release` | Filter diff to a specific HelmRelease | |
 | `config` | Explicit path to `.fmp.yaml` | *auto-discovered* |
-| `filter` | KIO filter YAML (overrides `.fmp.yaml`) | |
+| `filter-file` | KIO filter definition file | |
+| `filter-yaml` | Raw KIO filters YAML | |
+| `write-summary` | Write a step summary | `true` |
+| `comment` | Post/update a sticky PR comment | `false` |
+| `comment-mode` | When to comment (`changes`, `always`, `failure`) | `changes` |
+| `max-inline-diff-bytes` | Max diff bytes to inline | `50000` |
+| `export-dir` | Export rendered manifests directory | |
+| `export-changed-only` | Only export changed manifests | `false` |
+| `fail-on-warning` | Fail the step on warnings | `false` |
+| `fail-on-error` | Fail the step on errors | `true` |
 
 ### Outputs
 
 | Output | Description |
 | :--- | :--- |
-| `diff` | Unified diff of rendered manifests |
+| `status` | Overall status: `clean`, `changed`, `warning`, `error` |
+| `changed` | Whether manifest changes were detected |
+| `warnings-count` | Number of warnings |
+| `errors-count` | Number of errors |
+| `resources-added` | Added resources |
+| `resources-modified` | Modified resources |
+| `resources-deleted` | Deleted resources |
+| `resources-total` | Total changed resources |
+| `diff-bytes` | Size of the full diff |
+| `diff-truncated` | Whether the inline diff was truncated |
+| `diff-file` | Path to the full diff file |
+| `summary-file` | Path to the summary markdown |
+| `comment-file` | Path to the comment markdown |
+| `report-file` | Path to the structured JSON report |
+| `export-dir` | Directory where manifests were exported |
+
+### Examples
+
+**Opt-in sticky PR comment:**
+```yaml
+- uses: tobiash/flux-manifest-preview@main
+  with:
+    repo: .
+    base-ref: origin/main
+    comment: true
+    comment-mode: changes
+```
+
+**Export for downstream validation:**
+```yaml
+- uses: tobiash/flux-manifest-preview@main
+  with:
+    repo: .
+    base-ref: origin/main
+    export-dir: ./rendered
+    export-changed-only: true
+
+- name: Validate with kubeconform
+  run: kubeconform ./rendered/*.yaml
+```
+
+**Note:** `sops-decrypt` is intentionally unsupported in the GitHub Action to avoid leaking decrypted content into logs, summaries, comments, or artifacts.
 
 ---
 

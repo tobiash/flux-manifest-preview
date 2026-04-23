@@ -262,7 +262,7 @@ Use --init to generate a complete .fmp.yaml config file in the repo.`,
 
 	rootCmd.SilenceErrors = true
 	rootCmd.SilenceUsage = true
-	rootCmd.AddCommand(renderCmd, diffCmd, testCmd, getCmd, ciCmd, detectCmd, versionCmd)
+	rootCmd.AddCommand(renderCmd, diffCmd, testCmd, getCmd, ciCmd, detectCmd, versionCmd, githubActionCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		if errors.As(err, &expansionError) {

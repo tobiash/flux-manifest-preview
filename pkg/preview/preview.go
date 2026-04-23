@@ -281,6 +281,39 @@ func (p *Preview) Diff(a, b string, out io.Writer) error {
 	return nil
 }
 
+// DiffResult computes and writes the diff between two repository paths,
+// returning structured change metadata alongside the rendered diff text.
+func (p *Preview) DiffResult(a, b string, out io.Writer) (*diff.DiffResult, error) {
+	g, _ := errgroup.WithContext(p.ctx)
+	var ar, br *loadRepoResult
+	g.Go(func() error {
+		var err error
+		ar, err = p.freshLoadRepo(a)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		br, err = p.freshLoadRepo(b)
+		return err
+	})
+	if err := g.Wait(); err != nil {
+		return nil, fmt.Errorf("render error: %w", err)
+	}
+
+	if p.helmReleaseName != "" {
+		ar.render.FilterByLabel("helm.toolkit.fluxcd.io/name", p.helmReleaseName)
+		br.render.FilterByLabel("helm.toolkit.fluxcd.io/name", p.helmReleaseName)
+	}
+
+	p.applyOutputOptions(ar.render)
+	p.applyOutputOptions(br.render)
+	result, err := diff.DiffWithResult(ar.render, br.render, out)
+	if err != nil {
+		return nil, fmt.Errorf("diff error: %w", err)
+	}
+	return result, nil
+}
+
 // Opt is a functional option for configuring Preview.
 type Opt func(p *Preview) error
 

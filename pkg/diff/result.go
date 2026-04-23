@@ -1,0 +1,117 @@
+package diff
+
+import (
+	"fmt"
+	"io"
+
+	"github.com/hexops/gotextdiff"
+	"github.com/hexops/gotextdiff/myers"
+	"github.com/hexops/gotextdiff/span"
+	"github.com/tobiash/flux-manifest-preview/pkg/render"
+	"sigs.k8s.io/kustomize/kyaml/resid"
+)
+
+// ResourceChange describes a single resource change in a diff.
+type ResourceChange struct {
+	ID       resid.ResId
+	Kind     string
+	Producer string
+	Action   string // added, deleted, modified
+}
+
+// DiffResult holds the structured result of a diff between two renders.
+type DiffResult struct {
+	Added    []ResourceChange
+	Deleted  []ResourceChange
+	Modified []ResourceChange
+}
+
+// TotalChanged returns the total number of changed resources.
+func (r *DiffResult) TotalChanged() int {
+	return len(r.Added) + len(r.Deleted) + len(r.Modified)
+}
+
+// ByKind returns counts grouped by resource Kind.
+func (r *DiffResult) ByKind() map[string]int {
+	m := make(map[string]int)
+	for _, c := range r.Added {
+		m[c.Kind]++
+	}
+	for _, c := range r.Deleted {
+		m[c.Kind]++
+	}
+	for _, c := range r.Modified {
+		m[c.Kind]++
+	}
+	return m
+}
+
+// DiffWithResult computes a unified diff and returns structured change metadata.
+// The unified diff text is written to w.
+func DiffWithResult(a, b *render.Render, w io.Writer) (*DiffResult, error) {
+	var added, deleted, modified []resid.ResId
+	for _, ra := range a.Resources() {
+		if _, err := b.GetByCurrentId(ra.CurId()); err != nil {
+			deleted = append(deleted, ra.CurId())
+		} else {
+			modified = append(modified, ra.CurId())
+		}
+	}
+	for _, rb := range b.Resources() {
+		if _, err := a.GetByCurrentId(rb.CurId()); err != nil {
+			added = append(added, rb.CurId())
+		}
+	}
+
+	result := &DiffResult{}
+
+	for _, c := range added {
+		r, _ := b.GetByCurrentId(c)
+		yaml := r.MustYaml()
+		result.Added = append(result.Added, ResourceChange{
+			ID:     c,
+			Kind:   r.GetKind(),
+			Action: "added",
+		})
+		edits := myers.ComputeEdits(span.URIFromPath(c.String()), "", yaml)
+		if _, err := fmt.Fprint(w, gotextdiff.ToUnified(c.String(), c.String(), "", edits)); err != nil {
+			return nil, err
+		}
+	}
+
+	for _, d := range deleted {
+		r, _ := a.GetByCurrentId(d)
+		yaml := r.MustYaml()
+		result.Deleted = append(result.Deleted, ResourceChange{
+			ID:     d,
+			Kind:   r.GetKind(),
+			Action: "deleted",
+		})
+		edits := myers.ComputeEdits(span.URIFromPath(d.String()), yaml, "")
+		if _, err := fmt.Fprint(w, gotextdiff.ToUnified(d.String(), d.String(), yaml, edits)); err != nil {
+			return nil, err
+		}
+	}
+
+	for _, m := range modified {
+		ar, _ := a.GetByCurrentId(m)
+		br, _ := b.GetByCurrentId(m)
+
+		aYaml := ar.MustYaml()
+		bYaml := br.MustYaml()
+		if aYaml == bYaml {
+			continue
+		}
+
+		result.Modified = append(result.Modified, ResourceChange{
+			ID:     m,
+			Kind:   br.GetKind(),
+			Action: "modified",
+		})
+		edits := myers.ComputeEdits(span.URIFromPath(m.String()), aYaml, bYaml)
+		if _, err := fmt.Fprint(w, gotextdiff.ToUnified(m.String(), m.String(), aYaml, edits)); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}

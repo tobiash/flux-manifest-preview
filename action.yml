@@ -1,55 +1,171 @@
 name: 'Flux Manifest Preview'
-description: 'Render and diff Flux GitOps manifests'
+description: 'Render and diff Flux GitOps manifests with structured outputs and optional PR comments'
 inputs:
   repo:
-    description: Path to the repository checkout (must be a git worktree with full history)
+    description: 'Path to the repository checkout (must be a git worktree with full history)'
     required: false
     default: '.'
   base-ref:
-    description: Git ref to diff against (e.g. origin/main, HEAD~1). Defaults to origin/main or main.
+    description: 'Git ref to diff against (e.g. origin/main, HEAD~1). Defaults to origin/main or main.'
     required: false
     default: ''
+  base-sha:
+    description: 'Exact SHA to diff against. Overrides base-ref when set.'
+    required: false
+    default: ''
+  paths:
+    description: 'Kustomize bases or directories to render (newline-separated, relative to repo root)'
+    required: false
+    default: ''
+  recursive:
+    description: 'Recursively discover all paths under each directory'
+    required: false
+    default: 'false'
   helm:
-    description: Enable Helm rendering
+    description: 'Enable Helm rendering'
     required: false
     default: 'true'
   resolve-git:
-    description: Clone and follow external GitRepository sources
+    description: 'Clone and follow external GitRepository sources'
     required: false
     default: 'false'
-  filter:
-    description: KIO filters to apply to rendered YAML (overrides .fmp.yaml filters)
-    required: false
-    default: ''
-  config:
-    description: Path to an explicit .fmp.yaml config file (overrides auto-discovery)
-    required: false
-    default: ''
   sort:
-    description: Sort output for deterministic diffs
+    description: 'Sort output for deterministic diffs'
     required: false
     default: 'false'
   exclude-crds:
-    description: Strip CustomResourceDefinitions from output
+    description: 'Strip CustomResourceDefinitions from output'
     required: false
     default: 'false'
-  # Legacy inputs for backward compatibility with the two-checkout workflow
+  helm-release:
+    description: 'Filter diff to a specific HelmRelease by name'
+    required: false
+    default: ''
+  config:
+    description: 'Path to an explicit .fmp.yaml config file (overrides auto-discovery)'
+    required: false
+    default: ''
+  filter-file:
+    description: 'Path to a KIO filters definition file'
+    required: false
+    default: ''
+  filter-yaml:
+    description: 'Raw KIO filters YAML string'
+    required: false
+    default: ''
+  registry-config:
+    description: 'Helm registry config path'
+    required: false
+    default: ''
+  repository-config:
+    description: 'Helm repository config path'
+    required: false
+    default: ''
+  repository-cache:
+    description: 'Helm repository cache path'
+    required: false
+    default: ''
+  export-dir:
+    description: 'Export rendered manifests to this directory'
+    required: false
+    default: ''
+  export-changed-only:
+    description: 'Only export manifests that have changed'
+    required: false
+    default: 'false'
+  write-summary:
+    description: 'Write a step summary'
+    required: false
+    default: 'true'
+  comment:
+    description: 'Post/update a sticky PR comment'
+    required: false
+    default: 'false'
+  comment-mode:
+    description: 'When to comment: changes, always, failure'
+    required: false
+    default: 'changes'
+  github-token:
+    description: 'Token for PR comments'
+    required: false
+    default: ${{ github.token }}
+  max-inline-diff-bytes:
+    description: 'Max diff bytes to inline in comments/summaries'
+    required: false
+    default: '50000'
+  diff-preview-lines:
+    description: 'Max diff lines to show in previews'
+    required: false
+    default: '200'
+  fail-on-warning:
+    description: 'Fail the step on warnings'
+    required: false
+    default: 'false'
+  fail-on-error:
+    description: 'Fail the step on errors'
+    required: false
+    default: 'true'
+  # Legacy inputs for the two-checkout workflow
   repo-a:
-    description: '(Legacy) Path to the base repository checkout'
+    description: 'Path to the base repository checkout'
     required: false
     default: ''
   repo-b:
-    description: '(Legacy) Path to the target repository checkout'
+    description: 'Path to the target repository checkout'
     required: false
     default: ''
   kustomizations:
-    description: '(Legacy) Kustomize bases to render (newline-separated, relative to repo path)'
+    description: 'Kustomize bases to render (newline-separated, relative to repo path)'
     required: false
     default: ''
+
 outputs:
-  diff:
-    description: Diff in unified format
-    value: ${{ steps.fmp.outputs.diff }}
+  status:
+    description: 'Overall status: clean, changed, warning, error'
+    value: ${{ steps.fmp.outputs.status }}
+  changed:
+    description: 'Whether manifest changes were detected'
+    value: ${{ steps.fmp.outputs.changed }}
+  warnings-count:
+    description: 'Number of warnings'
+    value: ${{ steps.fmp.outputs.warnings-count }}
+  errors-count:
+    description: 'Number of errors'
+    value: ${{ steps.fmp.outputs.errors-count }}
+  resources-added:
+    description: 'Number of added resources'
+    value: ${{ steps.fmp.outputs.resources-added }}
+  resources-modified:
+    description: 'Number of modified resources'
+    value: ${{ steps.fmp.outputs.resources-modified }}
+  resources-deleted:
+    description: 'Number of deleted resources'
+    value: ${{ steps.fmp.outputs.resources-deleted }}
+  resources-total:
+    description: 'Total number of changed resources'
+    value: ${{ steps.fmp.outputs.resources-total }}
+  diff-bytes:
+    description: 'Size of the full diff in bytes'
+    value: ${{ steps.fmp.outputs.diff-bytes }}
+  diff-truncated:
+    description: 'Whether the inline diff was truncated'
+    value: ${{ steps.fmp.outputs.diff-truncated }}
+  diff-file:
+    description: 'Path to the full diff file'
+    value: ${{ steps.fmp.outputs.diff-file }}
+  summary-file:
+    description: 'Path to the summary markdown file'
+    value: ${{ steps.fmp.outputs.summary-file }}
+  comment-file:
+    description: 'Path to the comment markdown file'
+    value: ${{ steps.fmp.outputs.comment-file }}
+  report-file:
+    description: 'Path to the structured JSON report'
+    value: ${{ steps.fmp.outputs.report-file }}
+  export-dir:
+    description: 'Directory where rendered manifests were exported'
+    value: ${{ steps.fmp.outputs.export-dir }}
+
 runs:
   using: 'composite'
   steps:
@@ -60,6 +176,7 @@ runs:
         mkdir -p "$RUNNER_TOOL_CACHE/fmp"
 
         REF="${{ github.action_ref }}"
+        BUILD_FROM_SOURCE=false
 
         if [[ "$REF" == v* ]]; then
           echo "::group::Download fmp $REF"
@@ -70,10 +187,23 @@ runs:
             *) echo "Unsupported architecture: $ARCH" && exit 1 ;;
           esac
           URL="https://github.com/tobiash/flux-manifest-preview/releases/download/${REF}/fmp_${REF}_linux_${ARCH}.tar.gz"
-          curl -fsSL "$URL" | tar -xz -C "$RUNNER_TOOL_CACHE/fmp" fmp
-          chmod +x "$RUNNER_TOOL_CACHE/fmp/fmp"
-          echo "::endgroup::"
+
+          if curl -fsSL --fail "$URL" -o fmp.tar.gz; then
+            tar -xzf fmp.tar.gz -C "$RUNNER_TOOL_CACHE/fmp" fmp
+            chmod +x "$RUNNER_TOOL_CACHE/fmp/fmp"
+            rm fmp.tar.gz
+            echo "Successfully downloaded fmp from $URL"
+            echo "::endgroup::"
+          else
+            echo "Failed to download fmp from $URL, falling back to build from source"
+            echo "::endgroup::"
+            BUILD_FROM_SOURCE=true
+          fi
         else
+          BUILD_FROM_SOURCE=true
+        fi
+
+        if [[ "$BUILD_FROM_SOURCE" == "true" ]]; then
           echo "::group::Build fmp from source ($REF)"
           cd "${{ github.action_path }}"
           go build -ldflags="-s -w" -trimpath -o "$RUNNER_TOOL_CACHE/fmp/fmp" ./cmd/fmp
@@ -88,72 +218,56 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        fmp github-action
 
-        if [[ -n "${{ inputs.repo-a }}" && -n "${{ inputs.repo-b }}" ]]; then
-          echo "::warning::repo-a/repo-b inputs are deprecated; use repo and base-ref instead"
-          export FMP_REPO_A="${{ inputs.repo-a }}"
-          export FMP_REPO_B="${{ inputs.repo-b }}"
-          if [[ -n "${{ inputs.kustomizations }}" ]]; then
-            export FMP_KUSTOMIZATIONS="${{ inputs.kustomizations }}"
-          fi
-          if [[ -n "${{ inputs.helm }}" ]]; then
-            export FMP_RENDER_HELM="${{ inputs.helm }}"
-          fi
-          DIFF=$(fmp ci)
-          echo "$DIFF"
-          {
-            echo "diff<<EOF"
-            echo "$DIFF"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-          exit 0
-        fi
+    - name: Post PR Comment
+      if: ${{ inputs.comment == 'true' && github.event_name == 'pull_request' }}
+      uses: actions/github-script@v7
+      env:
+        COMMENT_FILE: ${{ steps.fmp.outputs.comment-file }}
+        DELETE_COMMENT: ${{ steps.fmp.outputs.status == 'clean' && inputs.comment-mode == 'changes' }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const fs = require('fs');
+          const { owner, repo } = context.repo;
+          const issue_number = context.issue.number;
+          const marker = '<!-- fmp-comment-marker -->';
 
-        REPO="${{ inputs.repo }}"
-        BASE_REF="${{ inputs.base-ref }}"
+          const comments = await github.rest.issues.listComments({
+            owner,
+            repo,
+            issue_number,
+          });
+          const botComment = comments.data.find(c => c.body.includes(marker));
 
-        cd "$REPO"
+          if (process.env.DELETE_COMMENT === 'true' && botComment) {
+            await github.rest.issues.deleteComment({
+              owner,
+              repo,
+              comment_id: botComment.id,
+            });
+            return;
+          }
 
-        if [[ -z "$BASE_REF" ]]; then
-          if git rev-parse --verify --quiet "origin/main" >/dev/null 2>&1; then
-            BASE_REF="origin/main"
-          elif git rev-parse --verify --quiet "main" >/dev/null 2>&1; then
-            BASE_REF="main"
-          else
-            echo "::error::No base-ref specified and could not find main branch"
-            exit 1
-          fi
-        fi
+          if (!process.env.COMMENT_FILE || !fs.existsSync(process.env.COMMENT_FILE)) {
+            return;
+          }
 
-        FMP_ARGS=("diff" "$BASE_REF")
+          const body = fs.readFileSync(process.env.COMMENT_FILE, 'utf8');
 
-        if [[ "${{ inputs.helm }}" == "true" ]]; then
-          FMP_ARGS+=("--render-helm")
-        fi
-        if [[ "${{ inputs.resolve-git }}" == "true" ]]; then
-          FMP_ARGS+=("--resolve-git")
-        fi
-        if [[ -n "${{ inputs.config }}" ]]; then
-          FMP_ARGS+=("--filter" "${{ inputs.config }}")
-        fi
-        if [[ "${{ inputs.sort }}" == "true" ]]; then
-          FMP_ARGS+=("--sort")
-        fi
-        if [[ "${{ inputs.exclude-crds }}" == "true" ]]; then
-          FMP_ARGS+=("--exclude-crds")
-        fi
-
-        echo "::group::fmp diff ${FMP_ARGS[*]}"
-        DIFF=$(fmp "${FMP_ARGS[@]}" 2>&1) || true
-        echo "::endgroup::"
-
-        echo "$DIFF"
-        {
-          echo "diff<<EOF"
-          echo "$DIFF"
-          echo "EOF"
-        } >> "$GITHUB_OUTPUT"
-
-        if echo "$DIFF" | rg -q '^ERROR:'; then
-          exit 1
-        fi
+          if (botComment) {
+            await github.rest.issues.updateComment({
+              owner,
+              repo,
+              comment_id: botComment.id,
+              body,
+            });
+          } else {
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number,
+              body,
+            });
+          }

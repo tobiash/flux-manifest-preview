@@ -14,6 +14,7 @@ require (
 	github.com/go-logr/zerologr v1.2.3
 	github.com/hexops/gotextdiff v1.0.3
 	github.com/rs/zerolog v1.33.0
+	github.com/sethvargo/go-githubactions v1.3.2
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/sync v0.19.0
 	gopkg.in/yaml.v3 v3.0.1
