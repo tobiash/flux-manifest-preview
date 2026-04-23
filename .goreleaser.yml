@@ -16,7 +16,7 @@ builds:
       - arm64
     hooks:
       post:
-        - cmd: upx -9 "{{ .Path }}"
+        - cmd: 'sh -c "if [ \"{{ .Os }}\" = \"linux\" ]; then upx -9 \"{{ .Path }}\"; fi"'
           output: true
 
 archives:
