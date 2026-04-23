@@ -54,20 +54,14 @@ func runGitHubAction(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Write report JSON
+	// Write report artifacts
 	reportDir := os.Getenv("RUNNER_TEMP")
 	if reportDir == "" {
 		reportDir, _ = os.MkdirTemp("", "fmp-action-*")
 	}
 
 	reportFile := filepath.Join(reportDir, "fmp-report.json")
-	if err := writeJSON(reportFile, report); err != nil {
-		if inCI {
-			act.Warningf("writing report: %v", err)
-		}
-	} else {
-		report.ReportFile = reportFile
-	}
+	report.ReportFile = reportFile
 
 	diffFile := filepath.Join(reportDir, "fmp-diff.txt")
 	if report.DiffPreview != "" {
@@ -103,6 +97,12 @@ func runGitHubAction(cmd *cobra.Command, args []string) error {
 			}
 		} else {
 			report.CommentFile = commentFile
+		}
+	}
+
+	if err := writeJSON(reportFile, report); err != nil {
+		if inCI {
+			act.Warningf("writing report: %v", err)
 		}
 	}
 

@@ -1,6 +1,11 @@
 name: 'Flux Manifest Preview'
 description: 'Render and diff Flux GitOps manifests with structured outputs and optional PR comments'
+
 inputs:
+  binary:
+    description: 'Path to an existing fmp executable for local or non-release testing'
+    required: false
+    default: ''
   repo:
     description: 'Path to the repository checkout (must be a git worktree with full history)'
     required: false
@@ -105,7 +110,6 @@ inputs:
     description: 'Fail the step on errors'
     required: false
     default: 'true'
-  # Legacy inputs for the two-checkout workflow
   repo-a:
     description: 'Path to the base repository checkout'
     required: false
@@ -122,181 +126,35 @@ inputs:
 outputs:
   status:
     description: 'Overall status: clean, changed, warning, error'
-    value: ${{ steps.fmp.outputs.status }}
   changed:
     description: 'Whether manifest changes were detected'
-    value: ${{ steps.fmp.outputs.changed }}
   warnings-count:
     description: 'Number of warnings'
-    value: ${{ steps.fmp.outputs.warnings-count }}
   errors-count:
     description: 'Number of errors'
-    value: ${{ steps.fmp.outputs.errors-count }}
   resources-added:
     description: 'Number of added resources'
-    value: ${{ steps.fmp.outputs.resources-added }}
   resources-modified:
     description: 'Number of modified resources'
-    value: ${{ steps.fmp.outputs.resources-modified }}
   resources-deleted:
     description: 'Number of deleted resources'
-    value: ${{ steps.fmp.outputs.resources-deleted }}
   resources-total:
     description: 'Total number of changed resources'
-    value: ${{ steps.fmp.outputs.resources-total }}
   diff-bytes:
     description: 'Size of the full diff in bytes'
-    value: ${{ steps.fmp.outputs.diff-bytes }}
   diff-truncated:
     description: 'Whether the inline diff was truncated'
-    value: ${{ steps.fmp.outputs.diff-truncated }}
   diff-file:
     description: 'Path to the full diff file'
-    value: ${{ steps.fmp.outputs.diff-file }}
   summary-file:
     description: 'Path to the summary markdown file'
-    value: ${{ steps.fmp.outputs.summary-file }}
   comment-file:
     description: 'Path to the comment markdown file'
-    value: ${{ steps.fmp.outputs.comment-file }}
   report-file:
     description: 'Path to the structured JSON report'
-    value: ${{ steps.fmp.outputs.report-file }}
   export-dir:
     description: 'Directory where rendered manifests were exported'
-    value: ${{ steps.fmp.outputs.export-dir }}
 
 runs:
-  using: 'composite'
-  steps:
-    - name: Install fmp
-      shell: bash
-      run: |
-        set -euo pipefail
-        mkdir -p "$RUNNER_TOOL_CACHE/fmp"
-
-        REF="${{ github.action_ref }}"
-        BUILD_FROM_SOURCE=false
-
-        if [[ "$REF" == v* ]]; then
-          echo "::group::Download fmp $REF"
-          ARCH=$(uname -m)
-          case "$ARCH" in
-            x86_64) ARCH="amd64" ;;
-            aarch64) ARCH="arm64" ;;
-            *) echo "Unsupported architecture: $ARCH" && exit 1 ;;
-          esac
-          URL="https://github.com/tobiash/flux-manifest-preview/releases/download/${REF}/fmp_${REF}_linux_${ARCH}.tar.gz"
-
-          if curl -fsSL --fail "$URL" -o fmp.tar.gz; then
-            tar -xzf fmp.tar.gz -C "$RUNNER_TOOL_CACHE/fmp" fmp
-            chmod +x "$RUNNER_TOOL_CACHE/fmp/fmp"
-            rm fmp.tar.gz
-            echo "Successfully downloaded fmp from $URL"
-            echo "::endgroup::"
-          else
-            echo "Failed to download fmp from $URL, falling back to build from source"
-            echo "::endgroup::"
-            BUILD_FROM_SOURCE=true
-          fi
-        else
-          BUILD_FROM_SOURCE=true
-        fi
-
-        if [[ "$BUILD_FROM_SOURCE" == "true" ]]; then
-          echo "::group::Build fmp from source ($REF)"
-          cd "${{ github.action_path }}"
-          go build -ldflags="-s -w" -trimpath -o "$RUNNER_TOOL_CACHE/fmp/fmp" ./cmd/fmp
-          chmod +x "$RUNNER_TOOL_CACHE/fmp/fmp"
-          echo "::endgroup::"
-        fi
-
-        echo "$RUNNER_TOOL_CACHE/fmp" >> "$GITHUB_PATH"
-
-    - name: Flux Manifest Preview
-      id: fmp
-      shell: bash
-      env:
-        INPUT_REPO: ${{ inputs.repo }}
-        INPUT_BASE_REF: ${{ inputs.base-ref }}
-        INPUT_BASE_SHA: ${{ inputs.base-sha }}
-        INPUT_PATHS: ${{ inputs.paths }}
-        INPUT_RECURSIVE: ${{ inputs.recursive }}
-        INPUT_HELM: ${{ inputs.helm }}
-        INPUT_RESOLVE_GIT: ${{ inputs.resolve-git }}
-        INPUT_SORT: ${{ inputs.sort }}
-        INPUT_EXCLUDE_CRDS: ${{ inputs.exclude-crds }}
-        INPUT_HELM_RELEASE: ${{ inputs.helm-release }}
-        INPUT_CONFIG: ${{ inputs.config }}
-        INPUT_FILTER_FILE: ${{ inputs.filter-file }}
-        INPUT_FILTER_YAML: ${{ inputs.filter-yaml }}
-        INPUT_REGISTRY_CONFIG: ${{ inputs.registry-config }}
-        INPUT_REPOSITORY_CONFIG: ${{ inputs.repository-config }}
-        INPUT_REPOSITORY_CACHE: ${{ inputs.repository-cache }}
-        INPUT_EXPORT_DIR: ${{ inputs.export-dir }}
-        INPUT_EXPORT_CHANGED_ONLY: ${{ inputs.export-changed-only }}
-        INPUT_WRITE_SUMMARY: ${{ inputs.write-summary }}
-        INPUT_COMMENT: ${{ inputs.comment }}
-        INPUT_COMMENT_MODE: ${{ inputs.comment-mode }}
-        INPUT_MAX_INLINE_DIFF_BYTES: ${{ inputs.max-inline-diff-bytes }}
-        INPUT_DIFF_PREVIEW_LINES: ${{ inputs.diff-preview-lines }}
-        INPUT_FAIL_ON_WARNING: ${{ inputs.fail-on-warning }}
-        INPUT_FAIL_ON_ERROR: ${{ inputs.fail-on-error }}
-        INPUT_REPO_A: ${{ inputs.repo-a }}
-        INPUT_REPO_B: ${{ inputs.repo-b }}
-        INPUT_KUSTOMIZATIONS: ${{ inputs.kustomizations }}
-      run: |
-        set -euo pipefail
-        fmp github-action
-
-    - name: Post PR Comment
-      if: ${{ inputs.comment == 'true' && github.event_name == 'pull_request' }}
-      uses: actions/github-script@v7
-      env:
-        COMMENT_FILE: ${{ steps.fmp.outputs.comment-file }}
-        DELETE_COMMENT: ${{ steps.fmp.outputs.status == 'clean' && inputs.comment-mode == 'changes' }}
-      with:
-        github-token: ${{ inputs.github-token }}
-        script: |
-          const fs = require('fs');
-          const { owner, repo } = context.repo;
-          const issue_number = context.issue.number;
-          const marker = '<!-- fmp-comment-marker -->';
-
-          const comments = await github.rest.issues.listComments({
-            owner,
-            repo,
-            issue_number,
-          });
-          const botComment = comments.data.find(c => c.body.includes(marker));
-
-          if (process.env.DELETE_COMMENT === 'true' && botComment) {
-            await github.rest.issues.deleteComment({
-              owner,
-              repo,
-              comment_id: botComment.id,
-            });
-            return;
-          }
-
-          if (!process.env.COMMENT_FILE || !fs.existsSync(process.env.COMMENT_FILE)) {
-            return;
-          }
-
-          const body = fs.readFileSync(process.env.COMMENT_FILE, 'utf8');
-
-          if (botComment) {
-            await github.rest.issues.updateComment({
-              owner,
-              repo,
-              comment_id: botComment.id,
-              body,
-            });
-          } else {
-            await github.rest.issues.createComment({
-              owner,
-              repo,
-              issue_number,
-              body,
-            });
-          }
+  using: 'node24'
+  main: 'dist/index.js'

@@ -25,3 +25,41 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  smoke-test-release-action:
+    needs: release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - name: Prepare test repos
+        run: |
+          cp -r tests/action /tmp/repo-a
+          cp -r tests/action /tmp/repo-b
+          sed -i 's/color: blue/color: green/' /tmp/repo-b/apps/podinfo/configmap.yaml
+      - name: Run flux-manifest-preview release download path
+        id: fmp
+        uses: ./
+        env:
+          FMP_ACTION_REF: ${{ github.ref_name }}
+        with:
+          repo-a: /tmp/repo-a
+          repo-b: /tmp/repo-b
+          kustomizations: |
+            clusters/kube
+          helm: 'false'
+      - name: Verify outputs
+        run: |
+          if [ "${{ steps.fmp.outputs.changed }}" != "true" ]; then
+            echo "ERROR: expected changed=true"
+            exit 1
+          fi
+
+          if [ ! -f "${{ steps.fmp.outputs.diff-file }}" ]; then
+            echo "ERROR: diff file does not exist"
+            exit 1
+          fi
+
+          grep -q "blue" "${{ steps.fmp.outputs.diff-file }}" || { echo "Missing 'blue' in diff"; exit 1; }
+          grep -q "green" "${{ steps.fmp.outputs.diff-file }}" || { echo "Missing 'green' in diff"; exit 1; }

@@ -134,11 +134,11 @@ filters:
 Use `fmp` in your CI/CD pipelines to review PRs automatically.
 
 ```yaml
-- uses: actions/checkout@v4
+- uses: actions/checkout@v6
   with:
     fetch-depth: 0  # Required for git-aware diffing
 
-- uses: tobiash/flux-manifest-preview@main
+- uses: tobiash/flux-manifest-preview@vX.Y.Z
   with:
     repo: .
     base-ref: origin/main
@@ -149,6 +149,7 @@ Use `fmp` in your CI/CD pipelines to review PRs automatically.
 
 | Input | Description | Default |
 | :--- | :--- | :--- |
+| `binary` | Path to an existing `fmp` executable for local or non-release testing | |
 | `repo` | Path to the repo checkout (must be a git worktree) | `.` |
 | `base-ref` | Git ref to diff against | `origin/main` |
 | `base-sha` | Exact SHA to diff against (overrides `base-ref`) | |
@@ -195,7 +196,7 @@ Use `fmp` in your CI/CD pipelines to review PRs automatically.
 
 **Opt-in sticky PR comment:**
 ```yaml
-- uses: tobiash/flux-manifest-preview@main
+- uses: tobiash/flux-manifest-preview@vX.Y.Z
   with:
     repo: .
     base-ref: origin/main
@@ -205,7 +206,7 @@ Use `fmp` in your CI/CD pipelines to review PRs automatically.
 
 **Export for downstream validation:**
 ```yaml
-- uses: tobiash/flux-manifest-preview@main
+- uses: tobiash/flux-manifest-preview@vX.Y.Z
   with:
     repo: .
     base-ref: origin/main
@@ -217,6 +218,8 @@ Use `fmp` in your CI/CD pipelines to review PRs automatically.
 ```
 
 **Note:** `sops-decrypt` is intentionally unsupported in the GitHub Action to avoid leaking decrypted content into logs, summaries, comments, or artifacts.
+
+For local action development or branch testing, build `fmp` ahead of time and pass it via `binary`. The action no longer builds Go code for you.
 
 ---
 

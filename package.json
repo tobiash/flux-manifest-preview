@@ -1,0 +1,20 @@
+{
+  "name": "flux-manifest-preview-action",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "ncc build src/index.js -o dist"
+  },
+  "dependencies": {
+    "@actions/core": "^1.11.1",
+    "@actions/exec": "^1.1.1",
+    "@actions/github": "^9.1.1",
+    "@actions/tool-cache": "^2.0.1"
+  },
+  "overrides": {
+    "undici": "6.25.0"
+  },
+  "devDependencies": {
+    "@vercel/ncc": "^0.38.4"
+  }
+}

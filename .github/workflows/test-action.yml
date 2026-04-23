@@ -8,6 +8,10 @@ on:
     paths:
       - 'action.yml'
       - '.github/workflows/test-action.yml'
+      - 'src/**'
+      - 'dist/**'
+      - 'package.json'
+      - 'package-lock.json'
       - 'tests/action/**'
 
 concurrency:
@@ -18,11 +22,14 @@ permissions:
   contents: read
 
 jobs:
-  test-source-build:
-    name: Test action (build from source)
+  test-custom-binary:
+    name: Test action (custom binary)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
 
       # Simulate a PR diff by comparing the repo against itself.
       # The "base" is the test fixture, the "target" is the same
@@ -34,10 +41,14 @@ jobs:
           # Modify a value in repo-b so the diff is non-empty
           sed -i 's/color: blue/color: green/' /tmp/repo-b/apps/podinfo/configmap.yaml
 
+      - name: Build fmp
+        run: go build -trimpath -ldflags="-s -w" -o /tmp/fmp ./cmd/fmp
+
       - name: Run flux-manifest-preview
         id: fmp
         uses: ./
         with:
+          binary: /tmp/fmp
           repo-a: /tmp/repo-a
           repo-b: /tmp/repo-b
           kustomizations: |

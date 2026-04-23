@@ -20,6 +20,15 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Verify bundled action output
+        run: |
+          npm ci
+          npm run build
+          git diff --exit-code dist
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
