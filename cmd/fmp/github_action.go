@@ -146,7 +146,7 @@ func executeAction(log logr.Logger, req *githubaction.Request) (*githubaction.Ac
 
 	left := req.DiffLeft()
 	right := req.DiffRight()
-	log.Info("diffing", "left", left, "right", right, "paths", req.Paths)
+	_, _ = fmt.Fprintf(os.Stderr, "[fmp-action] diffing left=%q right=%q paths=%v\n", left, right, req.Paths)
 
 	result, err := p.DiffResult(left, right, &diffText)
 	if err != nil {
@@ -164,7 +164,7 @@ func executeAction(log logr.Logger, req *githubaction.Request) (*githubaction.Ac
 		return report, err
 	}
 
-	log.Info("diff result", "added", len(result.Added), "modified", len(result.Modified), "deleted", len(result.Deleted))
+	_, _ = fmt.Fprintf(os.Stderr, "[fmp-action] diff result added=%d modified=%d deleted=%d\n", len(result.Added), len(result.Modified), len(result.Deleted))
 
 	fullDiff := diffText.String()
 	preview, truncated := githubaction.TruncateDiff(fullDiff, req.MaxInlineDiffBytes, req.DiffPreviewLines)
