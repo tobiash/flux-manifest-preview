@@ -139,8 +139,12 @@ func (r *Request) IsLegacy() bool {
 }
 
 func getInput(name, def string) string {
-	e := strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
-	v := os.Getenv("INPUT_" + e)
+	underscore := strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
+	v := os.Getenv("INPUT_" + underscore)
+	if v == "" && strings.Contains(name, "-") {
+		hyphen := strings.ToUpper(name)
+		v = os.Getenv("INPUT_" + hyphen)
+	}
 	if v == "" {
 		return def
 	}
