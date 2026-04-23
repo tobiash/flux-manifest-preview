@@ -23,11 +23,7 @@ archives:
   - id: fmp
     builds:
       - fmp
-    name_template: >-
-      fmp_
-      {{ .Version }}_
-      {{ .Os }}_
-      {{ .Arch }}
+    name_template: "fmp_{{ .Tag }}_{{ .Os }}_{{ .Arch }}"
     format: tar.gz
 
 checksum:
