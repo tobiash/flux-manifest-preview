@@ -69,7 +69,7 @@ func decryptYAML(data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("creating temp file: %w", err)
 	}
-	defer os.Remove(f.Name())
+	defer func() { _ = os.Remove(f.Name()) }()
 
 	if _, err := f.Write(data); err != nil {
 		_ = f.Close()
