@@ -207,9 +207,29 @@ func buildActionOpts(log logr.Logger, req *githubaction.Request) ([]preview.Opt,
 		paths = cfg.Paths
 	}
 
+	// Merge config values when action inputs are at their defaults (false)
+	recursive := req.Recursive
+	renderHelm := req.RenderHelm
+	sort := req.Sort
+	excludeCRDs := req.ExcludeCRDs
+	if cfg != nil {
+		if !recursive && cfg.Recursive != nil {
+			recursive = *cfg.Recursive
+		}
+		if !renderHelm && cfg.Helm != nil {
+			renderHelm = *cfg.Helm
+		}
+		if !sort && cfg.Sort != nil {
+			sort = *cfg.Sort
+		}
+		if !excludeCRDs && cfg.ExcludeCRDs != nil {
+			excludeCRDs = *cfg.ExcludeCRDs
+		}
+	}
+
 	opts := []preview.Opt{
 		preview.WithLogger(log),
-		preview.WithPaths(paths, req.Recursive),
+		preview.WithPaths(paths, recursive),
 	}
 
 	if req.ResolveGit {
@@ -218,15 +238,15 @@ func buildActionOpts(log logr.Logger, req *githubaction.Request) ([]preview.Opt,
 
 	opts = append(opts, preview.WithFluxKS())
 
-	if req.RenderHelm {
+	if renderHelm {
 		opts = append(opts, preview.WithHelm(helmSettings()))
 	}
 
-	if req.Sort {
+	if sort {
 		opts = append(opts, preview.WithSort())
 	}
 
-	if req.ExcludeCRDs {
+	if excludeCRDs {
 		opts = append(opts, preview.WithExcludeCRDs())
 	}
 
