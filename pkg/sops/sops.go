@@ -2,8 +2,9 @@ package sops
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
 
-	"github.com/getsops/sops/v3/decrypt"
 	"sigs.k8s.io/kustomize/api/resmap"
 	"sigs.k8s.io/kustomize/api/resource"
 	"sigs.k8s.io/kustomize/kyaml/resid"
@@ -64,11 +65,29 @@ func DecryptResources(rm resmap.ResMap) error {
 }
 
 func decryptYAML(data []byte) ([]byte, error) {
-	decrypted, err := decrypt.Data(data, "yaml")
+	f, err := os.CreateTemp("", "fmp-sops-*.yaml")
 	if err != nil {
+		return nil, fmt.Errorf("creating temp file: %w", err)
+	}
+	defer os.Remove(f.Name())
+
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("writing temp file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return nil, fmt.Errorf("closing temp file: %w", err)
+	}
+
+	cmd := exec.Command("sops", "-d", f.Name())
+	out, err := cmd.Output()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
+			return nil, fmt.Errorf("sops decrypt failed: %w (stderr: %s)", err, string(ee.Stderr))
+		}
 		return nil, fmt.Errorf("sops decrypt failed: %w", err)
 	}
-	return decrypted, nil
+	return out, nil
 }
 
 func HasSOPSResources(rm resmap.ResMap) bool {
