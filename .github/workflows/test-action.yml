@@ -44,19 +44,43 @@ jobs:
             clusters/kube
           helm: 'false'
 
-      - name: Verify diff output is non-empty
+      - name: Verify outputs
         run: |
-          if [ -z "${{ steps.fmp.outputs.diff }}" ]; then
-            echo "ERROR: diff output is empty"
+          echo "Status: ${{ steps.fmp.outputs.status }}"
+          echo "Changed: ${{ steps.fmp.outputs.changed }}"
+          echo "Resources total: ${{ steps.fmp.outputs.resources-total }}"
+          
+          if [ "${{ steps.fmp.outputs.changed }}" != "true" ]; then
+            echo "ERROR: expected changed=true"
             exit 1
           fi
-          echo "Diff produced successfully"
-
-      - name: Verify diff content
-        run: |
-          echo "${{ steps.fmp.outputs.diff }}" | grep -q "blue" || { echo "Missing 'blue' in diff"; exit 1; }
-          echo "${{ steps.fmp.outputs.diff }}" | grep -q "green" || { echo "Missing 'green' in diff"; exit 1; }
+          
+          if [ -z "${{ steps.fmp.outputs.diff-file }}" ]; then
+            echo "ERROR: diff-file output is empty"
+            exit 1
+          fi
+          
+          if [ ! -f "${{ steps.fmp.outputs.diff-file }}" ]; then
+            echo "ERROR: diff file does not exist"
+            exit 1
+          fi
+          
+          echo "Diff file: ${{ steps.fmp.outputs.diff-file }}"
+          cat "${{ steps.fmp.outputs.diff-file }}" | grep -q "blue" || { echo "Missing 'blue' in diff"; exit 1; }
+          cat "${{ steps.fmp.outputs.diff-file }}" | grep -q "green" || { echo "Missing 'green' in diff"; exit 1; }
           echo "Diff contains expected changes"
+          
+          if [ -z "${{ steps.fmp.outputs.summary-file }}" ]; then
+            echo "ERROR: summary-file output is empty"
+            exit 1
+          fi
+          echo "Summary file exists: ${{ steps.fmp.outputs.summary-file }}"
+          
+          if [ -z "${{ steps.fmp.outputs.report-file }}" ]; then
+            echo "ERROR: report-file output is empty"
+            exit 1
+          fi
+          echo "Report file exists: ${{ steps.fmp.outputs.report-file }}"
 
   test-cli:
     name: Test fmp CLI commands

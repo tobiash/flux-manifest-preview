@@ -4,35 +4,35 @@ import "strings"
 
 // Status values for ActionReport.
 const (
-	StatusClean    = "clean"
-	StatusChanged  = "changed"
-	StatusWarning  = "warning"
-	StatusError    = "error"
+	StatusClean   = "clean"
+	StatusChanged = "changed"
+	StatusWarning = "warning"
+	StatusError   = "error"
 )
 
 // ActionReport is the structured result of a GitHub Action run.
 type ActionReport struct {
-	Status string `json:"status"`
-	Changed bool `json:"changed"`
+	Status   string   `json:"status"`
+	Changed  bool     `json:"changed"`
 	Warnings []string `json:"warnings,omitempty"`
-	Errors []string `json:"errors,omitempty"`
+	Errors   []string `json:"errors,omitempty"`
 
-	DiffBytes int `json:"diff_bytes"`
-	DiffTruncated bool `json:"diff_truncated"`
-	DiffPreview string `json:"diff_preview,omitempty"`
+	DiffBytes     int    `json:"diff_bytes"`
+	DiffTruncated bool   `json:"diff_truncated"`
+	DiffPreview   string `json:"diff_preview,omitempty"`
 
-	DiffFile string `json:"diff_file,omitempty"`
+	DiffFile    string `json:"diff_file,omitempty"`
 	SummaryFile string `json:"summary_file,omitempty"`
 	CommentFile string `json:"comment_file,omitempty"`
-	ReportFile string `json:"report_file,omitempty"`
-	ExportDir string `json:"export_dir,omitempty"`
+	ReportFile  string `json:"report_file,omitempty"`
+	ExportDir   string `json:"export_dir,omitempty"`
 
-	ResourcesAdded int `json:"resources_added"`
+	ResourcesAdded    int `json:"resources_added"`
 	ResourcesModified int `json:"resources_modified"`
-	ResourcesDeleted int `json:"resources_deleted"`
-	ResourcesTotal int `json:"resources_total"`
+	ResourcesDeleted  int `json:"resources_deleted"`
+	ResourcesTotal    int `json:"resources_total"`
 
-	ByKind map[string]int `json:"by_kind,omitempty"`
+	ByKind     map[string]int `json:"by_kind,omitempty"`
 	ByProducer map[string]int `json:"by_producer,omitempty"`
 }
 

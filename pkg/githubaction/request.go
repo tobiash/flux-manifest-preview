@@ -12,12 +12,12 @@ import (
 // Request captures normalized inputs for the GitHub Action mode.
 type Request struct {
 	// Diff targets
-	Repo     string
-	BaseRef  string
-	BaseSHA  string
-	RepoA    string
-	RepoB    string
-	Paths    []string
+	Repo    string
+	BaseRef string
+	BaseSHA string
+	RepoA   string
+	RepoB   string
+	Paths   []string
 
 	// Render options
 	Recursive        bool
@@ -39,9 +39,9 @@ type Request struct {
 	ExportChangedOnly bool
 
 	// Reporting
-	WriteSummary      bool
-	Comment           bool
-	CommentMode       string // changes, always, failure
+	WriteSummary       bool
+	Comment            bool
+	CommentMode        string // changes, always, failure
 	MaxInlineDiffBytes int
 	DiffPreviewLines   int
 
@@ -87,13 +87,9 @@ func ParseRequestFromEnv() (*Request, error) {
 		return nil, fmt.Errorf("sops-decrypt is intentionally unsupported in GitHub Action mode to avoid leaking decrypted content into logs, summaries, comments, or artifacts")
 	}
 
-	if r.RepoA != "" && r.RepoB != "" {
+	if r.RepoA != "" && r.RepoB != "" && len(r.Paths) == 0 {
 		// Legacy mode: normalize to Repo/RepoA/RepoB fields
-		if len(r.Paths) == 0 {
-			r.Paths = parseLines(getInput("kustomizations", ""))
-		}
-	} else {
-		// Modern mode: if no paths provided, let config auto-discovery handle it
+		r.Paths = parseLines(getInput("kustomizations", ""))
 	}
 
 	return r, nil

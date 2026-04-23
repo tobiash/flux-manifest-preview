@@ -21,22 +21,22 @@ func RenderSummaryMarkdown(req *Request, report *ActionReport) string {
 	if emoji == "" {
 		emoji = "❓"
 	}
-	b.WriteString(fmt.Sprintf("**Status:** %s %s\n\n", emoji, strings.ToUpper(report.Status)))
+	_, _ = fmt.Fprintf(&b, "**Status:** %s %s\n\n", emoji, strings.ToUpper(report.Status))
 
 	b.WriteString("### Resource Changes\n\n")
 	b.WriteString("| Metric | Count |\n")
 	b.WriteString("| :--- | ---: |\n")
-	b.WriteString(fmt.Sprintf("| Added | %d |\n", report.ResourcesAdded))
-	b.WriteString(fmt.Sprintf("| Modified | %d |\n", report.ResourcesModified))
-	b.WriteString(fmt.Sprintf("| Deleted | %d |\n", report.ResourcesDeleted))
-	b.WriteString(fmt.Sprintf("| Total Changed | %d |\n\n", report.ResourcesTotal))
+	_, _ = fmt.Fprintf(&b, "| Added | %d |\n", report.ResourcesAdded)
+	_, _ = fmt.Fprintf(&b, "| Modified | %d |\n", report.ResourcesModified)
+	_, _ = fmt.Fprintf(&b, "| Deleted | %d |\n", report.ResourcesDeleted)
+	_, _ = fmt.Fprintf(&b, "| Total Changed | %d |\n\n", report.ResourcesTotal)
 
 	if len(report.ByKind) > 0 {
 		b.WriteString("### By Kind\n\n")
 		b.WriteString("| Kind | Count |\n")
 		b.WriteString("| :--- | ---: |\n")
 		for _, pair := range sortedMap(report.ByKind) {
-			b.WriteString(fmt.Sprintf("| %s | %s |\n", pair[0], pair[1]))
+			_, _ = fmt.Fprintf(&b, "| %s | %s |\n", pair[0], pair[1])
 		}
 		b.WriteString("\n")
 	}
@@ -44,7 +44,7 @@ func RenderSummaryMarkdown(req *Request, report *ActionReport) string {
 	if len(report.Warnings) > 0 {
 		b.WriteString("### ⚠️ Warnings\n\n")
 		for _, w := range report.Warnings {
-			b.WriteString(fmt.Sprintf("- %s\n", escapeMarkdown(w)))
+			_, _ = fmt.Fprintf(&b, "- %s\n", escapeMarkdown(w))
 		}
 		b.WriteString("\n")
 	}
@@ -52,7 +52,7 @@ func RenderSummaryMarkdown(req *Request, report *ActionReport) string {
 	if len(report.Errors) > 0 {
 		b.WriteString("### ❌ Errors\n\n")
 		for _, e := range report.Errors {
-			b.WriteString(fmt.Sprintf("- %s\n", escapeMarkdown(e)))
+			_, _ = fmt.Fprintf(&b, "- %s\n", escapeMarkdown(e))
 		}
 		b.WriteString("\n")
 	}
@@ -67,7 +67,7 @@ func RenderSummaryMarkdown(req *Request, report *ActionReport) string {
 	}
 
 	if report.ExportDir != "" {
-		b.WriteString(fmt.Sprintf("### 📦 Export\n\nRendered manifests exported to `%s` (%d files).\n\n", report.ExportDir, report.ResourcesTotal))
+		_, _ = fmt.Fprintf(&b, "### 📦 Export\n\nRendered manifests exported to `%s` (%d files).\n\n", report.ExportDir, report.ResourcesTotal)
 	}
 
 	return b.String()
@@ -88,7 +88,7 @@ func RenderCommentMarkdown(req *Request, report *ActionReport) string {
 		emoji = "❓"
 	}
 
-	b.WriteString(fmt.Sprintf("### %s Flux Manifest Preview\n\n", emoji))
+	_, _ = fmt.Fprintf(&b, "### %s Flux Manifest Preview\n\n", emoji)
 
 	if len(report.Errors) > 0 {
 		b.WriteString("**Errors detected.**\n\n")
@@ -102,16 +102,16 @@ func RenderCommentMarkdown(req *Request, report *ActionReport) string {
 
 	b.WriteString("| Metric | Count |\n")
 	b.WriteString("| :--- | ---: |\n")
-	b.WriteString(fmt.Sprintf("| Added | %d |\n", report.ResourcesAdded))
-	b.WriteString(fmt.Sprintf("| Modified | %d |\n", report.ResourcesModified))
-	b.WriteString(fmt.Sprintf("| Deleted | %d |\n", report.ResourcesDeleted))
-	b.WriteString(fmt.Sprintf("| Total Changed | %d |\n\n", report.ResourcesTotal))
+	_, _ = fmt.Fprintf(&b, "| Added | %d |\n", report.ResourcesAdded)
+	_, _ = fmt.Fprintf(&b, "| Modified | %d |\n", report.ResourcesModified)
+	_, _ = fmt.Fprintf(&b, "| Deleted | %d |\n", report.ResourcesDeleted)
+	_, _ = fmt.Fprintf(&b, "| Total Changed | %d |\n\n", report.ResourcesTotal)
 
 	if len(report.ByKind) > 0 {
 		b.WriteString("| Kind | Count |\n")
 		b.WriteString("| :--- | ---: |\n")
 		for _, pair := range sortedMap(report.ByKind) {
-			b.WriteString(fmt.Sprintf("| %s | %s |\n", pair[0], pair[1]))
+			_, _ = fmt.Fprintf(&b, "| %s | %s |\n", pair[0], pair[1])
 		}
 		b.WriteString("\n")
 	}
@@ -119,7 +119,7 @@ func RenderCommentMarkdown(req *Request, report *ActionReport) string {
 	if len(report.Warnings) > 0 {
 		b.WriteString("**Warnings:**\n")
 		for _, w := range report.Warnings {
-			b.WriteString(fmt.Sprintf("- %s\n", escapeMarkdown(w)))
+			_, _ = fmt.Fprintf(&b, "- %s\n", escapeMarkdown(w))
 		}
 		b.WriteString("\n")
 	}
@@ -127,7 +127,7 @@ func RenderCommentMarkdown(req *Request, report *ActionReport) string {
 	if len(report.Errors) > 0 {
 		b.WriteString("**Errors:**\n")
 		for _, e := range report.Errors {
-			b.WriteString(fmt.Sprintf("- %s\n", escapeMarkdown(e)))
+			_, _ = fmt.Fprintf(&b, "- %s\n", escapeMarkdown(e))
 		}
 		b.WriteString("\n")
 	}
@@ -143,7 +143,7 @@ func RenderCommentMarkdown(req *Request, report *ActionReport) string {
 	}
 
 	if report.ExportDir != "" {
-		b.WriteString(fmt.Sprintf("📦 Exported manifests: `%s`\n\n", report.ExportDir))
+		_, _ = fmt.Fprintf(&b, "📦 Exported manifests: `%s`\n\n", report.ExportDir)
 	}
 
 	b.WriteString("<!-- fmp-comment-marker -->\n")

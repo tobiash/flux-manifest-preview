@@ -134,8 +134,8 @@ func executeAction(log logr.Logger, req *githubaction.Request) (*githubaction.Ac
 	if err != nil {
 		// Try to produce a partial report even on error
 		report := &githubaction.ActionReport{
-			Status:   githubaction.StatusError,
-			Errors:   []string{err.Error()},
+			Status:    githubaction.StatusError,
+			Errors:    []string{err.Error()},
 			DiffBytes: diffText.Len(),
 		}
 		if diffText.Len() > 0 {
