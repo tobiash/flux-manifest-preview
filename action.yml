@@ -216,6 +216,35 @@ runs:
     - name: Flux Manifest Preview
       id: fmp
       shell: bash
+      env:
+        INPUT_REPO: ${{ inputs.repo }}
+        INPUT_BASE_REF: ${{ inputs.base-ref }}
+        INPUT_BASE_SHA: ${{ inputs.base-sha }}
+        INPUT_PATHS: ${{ inputs.paths }}
+        INPUT_RECURSIVE: ${{ inputs.recursive }}
+        INPUT_HELM: ${{ inputs.helm }}
+        INPUT_RESOLVE_GIT: ${{ inputs.resolve-git }}
+        INPUT_SORT: ${{ inputs.sort }}
+        INPUT_EXCLUDE_CRDS: ${{ inputs.exclude-crds }}
+        INPUT_HELM_RELEASE: ${{ inputs.helm-release }}
+        INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_FILTER_FILE: ${{ inputs.filter-file }}
+        INPUT_FILTER_YAML: ${{ inputs.filter-yaml }}
+        INPUT_REGISTRY_CONFIG: ${{ inputs.registry-config }}
+        INPUT_REPOSITORY_CONFIG: ${{ inputs.repository-config }}
+        INPUT_REPOSITORY_CACHE: ${{ inputs.repository-cache }}
+        INPUT_EXPORT_DIR: ${{ inputs.export-dir }}
+        INPUT_EXPORT_CHANGED_ONLY: ${{ inputs.export-changed-only }}
+        INPUT_WRITE_SUMMARY: ${{ inputs.write-summary }}
+        INPUT_COMMENT: ${{ inputs.comment }}
+        INPUT_COMMENT_MODE: ${{ inputs.comment-mode }}
+        INPUT_MAX_INLINE_DIFF_BYTES: ${{ inputs.max-inline-diff-bytes }}
+        INPUT_DIFF_PREVIEW_LINES: ${{ inputs.diff-preview-lines }}
+        INPUT_FAIL_ON_WARNING: ${{ inputs.fail-on-warning }}
+        INPUT_FAIL_ON_ERROR: ${{ inputs.fail-on-error }}
+        INPUT_REPO_A: ${{ inputs.repo-a }}
+        INPUT_REPO_B: ${{ inputs.repo-b }}
+        INPUT_KUSTOMIZATIONS: ${{ inputs.kustomizations }}
       run: |
         set -euo pipefail
         fmp github-action
