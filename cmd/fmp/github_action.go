@@ -29,18 +29,23 @@ func githubActionCmd() *cobra.Command {
 func runGitHubAction(cmd *cobra.Command, args []string) error {
 	act := githubactions.New()
 	log := cliLogger()
+	inCI := os.Getenv("GITHUB_ACTIONS") == "true"
 
 	req, err := githubaction.ParseRequestFromEnv()
 	if err != nil {
-		act.Errorf("%v", err)
-		act.SetOutput("status", githubaction.StatusError)
-		act.SetOutput("errors-count", "1")
+		if inCI {
+			act.Errorf("%v", err)
+			act.SetOutput("status", githubaction.StatusError)
+			act.SetOutput("errors-count", "1")
+		}
 		return err
 	}
 
 	report, err := executeAction(log, req)
 	if err != nil {
-		act.Errorf("action execution failed: %v", err)
+		if inCI {
+			act.Errorf("action execution failed: %v", err)
+		}
 		if report == nil {
 			report = &githubaction.ActionReport{
 				Status: githubaction.StatusError,
@@ -57,7 +62,9 @@ func runGitHubAction(cmd *cobra.Command, args []string) error {
 
 	reportFile := filepath.Join(reportDir, "fmp-report.json")
 	if err := writeJSON(reportFile, report); err != nil {
-		act.Warningf("writing report: %v", err)
+		if inCI {
+			act.Warningf("writing report: %v", err)
+		}
 	} else {
 		report.ReportFile = reportFile
 	}
@@ -65,7 +72,9 @@ func runGitHubAction(cmd *cobra.Command, args []string) error {
 	diffFile := filepath.Join(reportDir, "fmp-diff.txt")
 	if report.DiffPreview != "" {
 		if err := os.WriteFile(diffFile, []byte(report.DiffPreview), 0o644); err != nil {
-			act.Warningf("writing diff file: %v", err)
+			if inCI {
+				act.Warningf("writing diff file: %v", err)
+			}
 		} else {
 			report.DiffFile = diffFile
 		}
@@ -75,38 +84,46 @@ func runGitHubAction(cmd *cobra.Command, args []string) error {
 	if req.WriteSummary {
 		summaryFile = filepath.Join(reportDir, "fmp-summary.md")
 		if err := os.WriteFile(summaryFile, []byte(githubaction.RenderSummaryMarkdown(req, report)), 0o644); err != nil {
-			act.Warningf("writing summary: %v", err)
+			if inCI {
+				act.Warningf("writing summary: %v", err)
+			}
 		} else {
 			report.SummaryFile = summaryFile
-			act.AddStepSummary(githubaction.RenderSummaryMarkdown(req, report))
+			if inCI && os.Getenv("GITHUB_STEP_SUMMARY") != "" {
+				act.AddStepSummary(githubaction.RenderSummaryMarkdown(req, report))
+			}
 		}
 	}
 
 	if req.ShouldComment(report) {
 		commentFile = filepath.Join(reportDir, "fmp-comment.md")
 		if err := os.WriteFile(commentFile, []byte(githubaction.RenderCommentMarkdown(req, report)), 0o644); err != nil {
-			act.Warningf("writing comment: %v", err)
+			if inCI {
+				act.Warningf("writing comment: %v", err)
+			}
 		} else {
 			report.CommentFile = commentFile
 		}
 	}
 
 	// Set outputs
-	act.SetOutput("status", report.Status)
-	act.SetOutput("changed", fmt.Sprintf("%t", report.Changed))
-	act.SetOutput("warnings-count", fmt.Sprintf("%d", len(report.Warnings)))
-	act.SetOutput("errors-count", fmt.Sprintf("%d", len(report.Errors)))
-	act.SetOutput("resources-added", fmt.Sprintf("%d", report.ResourcesAdded))
-	act.SetOutput("resources-modified", fmt.Sprintf("%d", report.ResourcesModified))
-	act.SetOutput("resources-deleted", fmt.Sprintf("%d", report.ResourcesDeleted))
-	act.SetOutput("resources-total", fmt.Sprintf("%d", report.ResourcesTotal))
-	act.SetOutput("diff-bytes", fmt.Sprintf("%d", report.DiffBytes))
-	act.SetOutput("diff-truncated", fmt.Sprintf("%t", report.DiffTruncated))
-	act.SetOutput("diff-file", report.DiffFile)
-	act.SetOutput("summary-file", report.SummaryFile)
-	act.SetOutput("comment-file", report.CommentFile)
-	act.SetOutput("report-file", report.ReportFile)
-	act.SetOutput("export-dir", report.ExportDir)
+	if inCI {
+		act.SetOutput("status", report.Status)
+		act.SetOutput("changed", fmt.Sprintf("%t", report.Changed))
+		act.SetOutput("warnings-count", fmt.Sprintf("%d", len(report.Warnings)))
+		act.SetOutput("errors-count", fmt.Sprintf("%d", len(report.Errors)))
+		act.SetOutput("resources-added", fmt.Sprintf("%d", report.ResourcesAdded))
+		act.SetOutput("resources-modified", fmt.Sprintf("%d", report.ResourcesModified))
+		act.SetOutput("resources-deleted", fmt.Sprintf("%d", report.ResourcesDeleted))
+		act.SetOutput("resources-total", fmt.Sprintf("%d", report.ResourcesTotal))
+		act.SetOutput("diff-bytes", fmt.Sprintf("%d", report.DiffBytes))
+		act.SetOutput("diff-truncated", fmt.Sprintf("%t", report.DiffTruncated))
+		act.SetOutput("diff-file", report.DiffFile)
+		act.SetOutput("summary-file", report.SummaryFile)
+		act.SetOutput("comment-file", report.CommentFile)
+		act.SetOutput("report-file", report.ReportFile)
+		act.SetOutput("export-dir", report.ExportDir)
+	}
 
 	if req.ShouldFail(report) {
 		return fmt.Errorf("fmp action failed: status=%s errors=%d warnings=%d", report.Status, len(report.Errors), len(report.Warnings))
@@ -129,6 +146,7 @@ func executeAction(log logr.Logger, req *githubaction.Request) (*githubaction.Ac
 
 	left := req.DiffLeft()
 	right := req.DiffRight()
+	log.Info("diffing", "left", left, "right", right, "paths", req.Paths)
 
 	result, err := p.DiffResult(left, right, &diffText)
 	if err != nil {
@@ -145,6 +163,8 @@ func executeAction(log logr.Logger, req *githubaction.Request) (*githubaction.Ac
 		}
 		return report, err
 	}
+
+	log.Info("diff result", "added", len(result.Added), "modified", len(result.Modified), "deleted", len(result.Deleted))
 
 	fullDiff := diffText.String()
 	preview, truncated := githubaction.TruncateDiff(fullDiff, req.MaxInlineDiffBytes, req.DiffPreviewLines)
