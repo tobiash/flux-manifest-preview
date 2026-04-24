@@ -25,12 +25,52 @@ type Config struct {
 	ExcludeCRDs  *bool               `yaml:"exclude-crds,omitempty"`
 	Filters      filter.FilterConfig `yaml:",inline"`
 	HelmSettings *HelmSettings       `yaml:"helm-settings,omitempty"`
+	Policies     *PolicyConfig       `yaml:"policies,omitempty"`
+	SourcePath   string              `yaml:"-"`
 }
 
 type HelmSettings struct {
 	RegistryConfig   string `yaml:"registry-config,omitempty"`
 	RepositoryConfig string `yaml:"repository-config,omitempty"`
 	RepositoryCache  string `yaml:"repository-cache,omitempty"`
+}
+
+type PolicyConfig struct {
+	Builtin []string             `yaml:"builtin,omitempty"`
+	Modules []string             `yaml:"modules,omitempty"`
+	Inline  []string             `yaml:"inline,omitempty"`
+	FailOn  []string             `yaml:"fail-on,omitempty"`
+	Labels  map[string]LabelList `yaml:"labels,omitempty"`
+}
+
+type LabelList []string
+
+func (l *LabelList) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		var label string
+		if err := value.Decode(&label); err != nil {
+			return err
+		}
+		if label == "" {
+			*l = nil
+			return nil
+		}
+		*l = []string{label}
+		return nil
+	case yaml.SequenceNode:
+		var labels []string
+		if err := value.Decode(&labels); err != nil {
+			return err
+		}
+		*l = labels
+		return nil
+	case 0:
+		*l = nil
+		return nil
+	default:
+		return fmt.Errorf("labels entries must be a string or list of strings")
+	}
 }
 
 func DiscoverConfigPath(repoPath string) string {
@@ -58,6 +98,7 @@ func LoadConfig(repoPath string) (*Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing config %s: %w", configPath, err)
 	}
+	cfg.SourcePath = configPath
 
 	return &cfg, nil
 }
@@ -72,6 +113,7 @@ func LoadConfigFromPath(configPath string) (*Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing config %s: %w", configPath, err)
 	}
+	cfg.SourcePath = configPath
 
 	return &cfg, nil
 }

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/tobiash/flux-manifest-preview/pkg/policy"
 )
 
 // RenderSummaryMarkdown generates a GitHub Step Summary markdown document.
@@ -26,6 +28,7 @@ func RenderSummaryMarkdown(req *Request, report *ActionReport) string {
 	b.WriteString(renderChangeSummary(report))
 	b.WriteString("\n")
 	writeKindBreakdown(&b, report)
+	writePolicySections(&b, report)
 
 	if len(report.Warnings) > 0 {
 		b.WriteString("### ⚠️ Warnings\n\n")
@@ -89,6 +92,7 @@ func RenderCommentMarkdown(req *Request, report *ActionReport) string {
 	b.WriteString(renderChangeSummary(report))
 	b.WriteString("\n")
 	writeKindBreakdown(&b, report)
+	writePolicySections(&b, report)
 
 	if len(report.Warnings) > 0 {
 		b.WriteString("**Warnings:**\n")
@@ -167,9 +171,52 @@ func writeKindBreakdown(b *strings.Builder, report *ActionReport) {
 	b.WriteString("\n</details>\n\n")
 }
 
+func writePolicySections(b *strings.Builder, report *ActionReport) {
+	if len(report.Classifications) > 0 {
+		b.WriteString("**Classifications:**\n")
+		for _, item := range summarizeClassifications(report.Classifications) {
+			_, _ = fmt.Fprintf(b, "- `%s` (%d)\n", item.id, item.count)
+		}
+		b.WriteString("\n")
+	}
+
+	if len(report.Violations) > 0 {
+		b.WriteString("**Violations:**\n")
+		for _, violation := range report.Violations {
+			message := violation.Message
+			if message == "" {
+				message = violation.ID
+			}
+			_, _ = fmt.Fprintf(b, "- `%s`: %s\n", violation.ID, escapeMarkdown(message))
+		}
+		b.WriteString("\n")
+	}
+
+	if len(report.Labels) > 0 {
+		b.WriteString("**Suggested labels:**\n")
+		for _, label := range report.Labels {
+			_, _ = fmt.Fprintf(b, "- `%s`\n", escapeMarkdown(label))
+		}
+		b.WriteString("\n")
+	}
+
+	if report.PolicyFailed {
+		b.WriteString("**Policy enforcement failed.**\n")
+		for _, id := range report.PolicyFailures {
+			_, _ = fmt.Fprintf(b, "- `%s` matched `fail-on`\n", id)
+		}
+		b.WriteString("\n")
+	}
+}
+
 type kindBreakdownRow struct {
 	Kind      string
 	Breakdown ChangeBreakdown
+}
+
+type summarizedClassification struct {
+	id    string
+	count int
 }
 
 func sortedKindBreakdown(m map[string]ChangeBreakdown) []kindBreakdownRow {
@@ -189,6 +236,27 @@ func sortedKindBreakdown(m map[string]ChangeBreakdown) []kindBreakdownRow {
 		return rows[i].Breakdown.Total > rows[j].Breakdown.Total
 	})
 
+	return rows
+}
+
+func summarizeClassifications(items []policy.Classification) []summarizedClassification {
+	if len(items) == 0 {
+		return nil
+	}
+	counts := make(map[string]int)
+	for _, item := range items {
+		counts[item.ID]++
+	}
+	rows := make([]summarizedClassification, 0, len(counts))
+	for id, count := range counts {
+		rows = append(rows, summarizedClassification{id: id, count: count})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].count == rows[j].count {
+			return rows[i].id < rows[j].id
+		}
+		return rows[i].count > rows[j].count
+	})
 	return rows
 }
 

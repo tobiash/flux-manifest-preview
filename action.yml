@@ -154,6 +154,14 @@ outputs:
     description: 'Path to the structured JSON report'
   export-dir:
     description: 'Directory where rendered manifests were exported'
+  classifications-json:
+    description: 'JSON array of matched policy classifications'
+  violations-json:
+    description: 'JSON array of matched policy violations'
+  labels-json:
+    description: 'JSON array of suggested/applied pull request labels'
+  policy-failed:
+    description: 'Whether a configured fail-on policy matched'
 
 runs:
   using: 'node24'

@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -13,7 +14,9 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/spf13/cobra"
 
+	"github.com/tobiash/flux-manifest-preview/pkg/config"
 	gitrepoexpander "github.com/tobiash/flux-manifest-preview/pkg/expander/gitrepo"
+	"github.com/tobiash/flux-manifest-preview/pkg/policy"
 	"github.com/tobiash/flux-manifest-preview/pkg/preview"
 )
 
@@ -45,7 +48,7 @@ func validateDiffArgs(_ *cobra.Command, args []string) error {
 	return nil
 }
 
-func runDiff(log logr.Logger, args []string, out io.Writer) error {
+func runDiff(log logr.Logger, args []string, summaryOut io.Writer, diffOut io.Writer) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("determining current directory: %w", err)
@@ -84,7 +87,40 @@ func runDiff(log logr.Logger, args []string, out io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("error creating preview: %w", err)
 	}
-	return p.Diff(leftPath, rightPath, out)
+
+	var diffText bytes.Buffer
+	result, err := p.DiffResult(leftPath, rightPath, &diffText)
+	if err != nil {
+		return err
+	}
+
+	cfg, err := loadConfigForRepo(plan.configRoot, configFile)
+	if err != nil {
+		if configFile != "" {
+			return fmt.Errorf("loading config %s: %w", configFile, err)
+		}
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	var policyCfg *config.PolicyConfig
+	if cfg != nil {
+		policyCfg = cfg.Policies
+	}
+	policyResult, err := policy.Evaluate(context.Background(), result, policyCfg, policyBaseDir(plan.configRoot, cfg))
+	if err != nil {
+		return fmt.Errorf("evaluating policies: %w", err)
+	}
+
+	if err := writeDiffSummary(summaryOut, result, policyResult); err != nil {
+		return fmt.Errorf("writing diff summary: %w", err)
+	}
+	if _, err = io.Copy(diffOut, &diffText); err != nil {
+		return err
+	}
+	if policyResult.PolicyFailed {
+		return fmt.Errorf("policy enforcement failed: %s", strings.Join(policyResult.PolicyFailures, ", "))
+	}
+	return nil
 }
 
 func resolveDiffPlan(args []string, cwd string) (*diffPlan, error) {

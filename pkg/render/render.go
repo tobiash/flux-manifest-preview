@@ -11,6 +11,7 @@ import (
 	"sigs.k8s.io/kustomize/api/resmap"
 	"sigs.k8s.io/kustomize/api/resource"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
+	"sigs.k8s.io/kustomize/kyaml/resid"
 )
 
 // Render holds a set of rendered Kubernetes YAML resources.
@@ -179,6 +180,11 @@ func (r *Render) MarkProvenanceToNew(count int, producer string) {
 	for _, res := range r.Resources()[count:] {
 		r.provenance[res.CurId().String()] = producerForResource(res, producer)
 	}
+}
+
+// ProducerForID returns the recorded producer for a resource ID.
+func (r *Render) ProducerForID(id resid.ResId) string {
+	return r.provenance[id.String()]
 }
 
 func duplicateWarning(id, existingProducer, newProducer, source string) error {

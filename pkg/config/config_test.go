@@ -212,6 +212,49 @@ exclude-crds: false
 	}
 }
 
+func TestLoadConfig_ParsesPolicies(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, ".fmp.yaml", `policies:
+  builtin:
+    - image_update
+    - namespace_delete
+  modules:
+    - .fmp/policies/*.rego
+  inline:
+    - |
+      package fmp
+      import rego.v1
+      labels contains "custom-label" if true
+  fail-on:
+    - forbid_latest
+  labels:
+    image_update: image-update
+    namespace_delete:
+      - risky-change
+      - cluster-admin-review
+`)
+
+	cfg, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if cfg == nil || cfg.Policies == nil {
+		t.Fatal("expected policies config")
+	}
+	if len(cfg.Policies.Builtin) != 2 {
+		t.Fatalf("expected 2 builtin policies, got %d", len(cfg.Policies.Builtin))
+	}
+	if got := cfg.Policies.Labels["image_update"]; len(got) != 1 || got[0] != "image-update" {
+		t.Fatalf("expected scalar label mapping, got %v", got)
+	}
+	if got := cfg.Policies.Labels["namespace_delete"]; len(got) != 2 || got[0] != "risky-change" || got[1] != "cluster-admin-review" {
+		t.Fatalf("expected list label mapping, got %v", got)
+	}
+	if cfg.SourcePath == "" {
+		t.Fatal("expected SourcePath to be set")
+	}
+}
+
 func writeFile(t *testing.T, dir, name, content string) {
 	t.Helper()
 	full := filepath.Join(dir, name)

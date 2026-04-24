@@ -39133,9 +39133,15 @@ async function run() {
       } catch (err) {
         execError = err
       }
-    })
+	    })
 
-    await maybeSyncComment(readReport())
+	    const report = readReport()
+	    await maybeSyncComment(report)
+	    try {
+	      await maybeSyncLabels(report)
+	    } catch (err) {
+	      core.warning(`PR label sync failed: ${err instanceof Error ? err.message : String(err)}`)
+	    }
 
     if (execError) {
       throw execError
@@ -39285,6 +39291,36 @@ async function maybeSyncComment(report) {
     repo,
     issue_number: issueNumber,
     body
+  })
+}
+
+async function maybeSyncLabels(report) {
+  if (github_context.eventName !== 'pull_request') {
+    return
+  }
+  if (!report || !Array.isArray(report.labels) || report.labels.length === 0) {
+    return
+  }
+
+  const token = stringInput('github-token', '')
+  if (token === '') {
+    core.warning('Skipping PR label sync because github-token is empty')
+    return
+  }
+
+  const octokit = getOctokit(token)
+  const {owner, repo} = github_context.repo
+  const issueNumber = github_context.issue.number
+  if (!issueNumber) {
+    core.warning('Skipping PR label sync because pull request context is missing issue number')
+    return
+  }
+
+  await octokit.rest.issues.addLabels({
+    owner,
+    repo,
+    issue_number: issueNumber,
+    labels: report.labels
   })
 }
 

@@ -108,7 +108,7 @@ inputs, use explicit git: or path: prefixes.`,
 		Args: validateDiffArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			log := cliLogger()
-			return runDiff(log, args, os.Stdout)
+			return runDiff(log, args, os.Stderr, os.Stdout)
 		},
 	}
 	diffCmd.Flags().StringVar(&helmRelease, "hr", "", "Filter diff to a specific HelmRelease by name")
@@ -302,20 +302,12 @@ func buildOptsNoFilters(log logr.Logger, configRepoPath string) ([]preview.Opt, 
 }
 
 func buildOptsWithFilters(log logr.Logger, configRepoPath string, applyFilters bool) ([]preview.Opt, error) {
-	var (
-		cfg *config.Config
-		err error
-	)
-	if configFile != "" {
-		cfg, err = config.LoadConfigFromPath(configFile)
-		if err != nil {
+	cfg, err := loadConfigForRepo(configRepoPath, configFile)
+	if err != nil {
+		if configFile != "" {
 			return nil, fmt.Errorf("loading config %s: %w", configFile, err)
 		}
-	} else {
-		cfg, err = config.LoadConfig(configRepoPath)
-		if err != nil {
-			return nil, fmt.Errorf("loading config: %w", err)
-		}
+		return nil, fmt.Errorf("loading config: %w", err)
 	}
 
 	paths := kustomizations

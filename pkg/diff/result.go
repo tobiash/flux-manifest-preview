@@ -13,10 +13,14 @@ import (
 
 // ResourceChange describes a single resource change in a diff.
 type ResourceChange struct {
-	ID       resid.ResId
-	Kind     string
-	Producer string
-	Action   string // added, deleted, modified
+	ID        resid.ResId
+	Kind      string
+	Name      string
+	Namespace string
+	Producer  string
+	Action    string // added, deleted, modified
+	Old       map[string]any
+	New       map[string]any
 }
 
 // DiffResult holds the structured result of a diff between two renders.
@@ -68,10 +72,15 @@ func DiffWithResult(a, b *render.Render, w io.Writer) (*DiffResult, error) {
 	for _, c := range added {
 		r, _ := b.GetByCurrentId(c)
 		yaml := r.MustYaml()
+		obj, _ := r.Map()
 		result.Added = append(result.Added, ResourceChange{
-			ID:     c,
-			Kind:   r.GetKind(),
-			Action: "added",
+			ID:        c,
+			Kind:      r.GetKind(),
+			Name:      r.GetName(),
+			Namespace: r.GetNamespace(),
+			Producer:  b.ProducerForID(c),
+			Action:    "added",
+			New:       obj,
 		})
 		edits := myers.ComputeEdits(span.URIFromPath(c.String()), "", yaml)
 		if _, err := fmt.Fprint(w, gotextdiff.ToUnified(c.String(), c.String(), "", edits)); err != nil {
@@ -82,10 +91,15 @@ func DiffWithResult(a, b *render.Render, w io.Writer) (*DiffResult, error) {
 	for _, d := range deleted {
 		r, _ := a.GetByCurrentId(d)
 		yaml := r.MustYaml()
+		obj, _ := r.Map()
 		result.Deleted = append(result.Deleted, ResourceChange{
-			ID:     d,
-			Kind:   r.GetKind(),
-			Action: "deleted",
+			ID:        d,
+			Kind:      r.GetKind(),
+			Name:      r.GetName(),
+			Namespace: r.GetNamespace(),
+			Producer:  a.ProducerForID(d),
+			Action:    "deleted",
+			Old:       obj,
 		})
 		edits := myers.ComputeEdits(span.URIFromPath(d.String()), yaml, "")
 		if _, err := fmt.Fprint(w, gotextdiff.ToUnified(d.String(), d.String(), yaml, edits)); err != nil {
@@ -104,9 +118,14 @@ func DiffWithResult(a, b *render.Render, w io.Writer) (*DiffResult, error) {
 		}
 
 		result.Modified = append(result.Modified, ResourceChange{
-			ID:     m,
-			Kind:   br.GetKind(),
-			Action: "modified",
+			ID:        m,
+			Kind:      br.GetKind(),
+			Name:      br.GetName(),
+			Namespace: br.GetNamespace(),
+			Producer:  b.ProducerForID(m),
+			Action:    "modified",
+			Old:       mapOrNil(ar),
+			New:       mapOrNil(br),
 		})
 		edits := myers.ComputeEdits(span.URIFromPath(m.String()), aYaml, bYaml)
 		if _, err := fmt.Fprint(w, gotextdiff.ToUnified(m.String(), m.String(), aYaml, edits)); err != nil {
@@ -114,4 +133,17 @@ func DiffWithResult(a, b *render.Render, w io.Writer) (*DiffResult, error) {
 		}
 	}
 	return result, nil
+}
+
+func mapOrNil(res interface {
+	Map() (map[string]any, error)
+}) map[string]any {
+	if res == nil {
+		return nil
+	}
+	obj, err := res.Map()
+	if err != nil {
+		return nil
+	}
+	return obj
 }

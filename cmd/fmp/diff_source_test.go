@@ -122,11 +122,21 @@ func TestRunDiff_NoArgsComparesHeadToWorktree(t *testing.T) {
 		t.Fatalf("Chdir() error = %v", err)
 	}
 
-	var out bytes.Buffer
-	if err := runDiff(logr.Discard(), nil, &out); err != nil {
+	var summary bytes.Buffer
+	var diffOut bytes.Buffer
+	if err := runDiff(logr.Discard(), nil, &summary, &diffOut); err != nil {
 		t.Fatalf("runDiff() error = %v", err)
 	}
-	result := out.String()
+	if !strings.Contains(summary.String(), "Mostly in-place changes detected.") {
+		t.Fatalf("expected summary classification, got:\n%s", summary.String())
+	}
+	if !strings.Contains(summary.String(), "🟢 0 to add, 🟡 1 to change, 🔴 0 to destroy.") {
+		t.Fatalf("expected terraform-style summary, got:\n%s", summary.String())
+	}
+	if !strings.Contains(summary.String(), "KIND") || !strings.Contains(summary.String(), "ADDED") || !strings.Contains(summary.String(), "TOTAL") {
+		t.Fatalf("expected kind table header, got:\n%s", summary.String())
+	}
+	result := diffOut.String()
 	if !strings.Contains(result, "value: old") || !strings.Contains(result, "value: new") {
 		t.Fatalf("expected diff to mention old and new values, got:\n%s", result)
 	}
@@ -173,13 +183,74 @@ spec:
 		t.Fatalf("Chdir() error = %v", err)
 	}
 
-	var out bytes.Buffer
-	if err := runDiff(logr.Discard(), nil, &out); err != nil {
+	var summary bytes.Buffer
+	var diffOut bytes.Buffer
+	if err := runDiff(logr.Discard(), nil, &summary, &diffOut); err != nil {
 		t.Fatalf("runDiff() error = %v", err)
 	}
-	result := out.String()
+	if !strings.Contains(summary.String(), "Mostly in-place changes detected.") {
+		t.Fatalf("expected summary classification, got:\n%s", summary.String())
+	}
+	result := diffOut.String()
 	if !strings.Contains(result, "value: old") || !strings.Contains(result, "value: new") {
 		t.Fatalf("expected diff to mention old and new values, got:\n%s", result)
+	}
+}
+
+func TestRunDiff_FailsOnPolicy(t *testing.T) {
+	resetGlobals()
+	repo := initGitRepo(t)
+	writeFile(t, repo, ".fmp.yaml", `paths:
+  - .
+sort: true
+policies:
+  inline:
+    - |
+      package fmp
+      import rego.v1
+
+      violations contains {
+        "id": "block_configmap",
+        "message": "ConfigMap changes are blocked"
+      } if {
+        some change in input.changes
+        change.kind == "ConfigMap"
+      }
+  fail-on:
+    - block_configmap
+`)
+	writeFile(t, repo, "kustomization.yaml", "resources:\n- configmap.yaml\n")
+	writeFile(t, repo, "configmap.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test\ndata:\n  value: old\n")
+	gitRun(t, repo, "add", ".")
+	gitCommit(t, repo, "initial state")
+	writeFile(t, repo, "configmap.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test\ndata:\n  value: new\n")
+
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	defer func() { _ = os.Chdir(origWD) }()
+	if err := os.Chdir(repo); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+
+	var summary bytes.Buffer
+	var diffOut bytes.Buffer
+	err = runDiff(logr.Discard(), nil, &summary, &diffOut)
+	if err == nil {
+		t.Fatal("expected policy failure")
+	}
+	if !strings.Contains(err.Error(), "policy enforcement failed: block_configmap") {
+		t.Fatalf("expected policy failure error, got %v", err)
+	}
+	if !strings.Contains(summary.String(), "Violations:") || !strings.Contains(summary.String(), "block_configmap") {
+		t.Fatalf("expected policy violation summary, got:\n%s", summary.String())
+	}
+	if !strings.Contains(summary.String(), "Policy enforcement failed:") {
+		t.Fatalf("expected policy failure section, got:\n%s", summary.String())
+	}
+	if !strings.Contains(diffOut.String(), "value: old") || !strings.Contains(diffOut.String(), "value: new") {
+		t.Fatalf("expected diff output despite policy failure, got:\n%s", diffOut.String())
 	}
 }
 

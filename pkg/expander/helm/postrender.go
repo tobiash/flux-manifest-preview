@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 
 	v2 "github.com/fluxcd/helm-controller/api/v2"
-	"helm.sh/helm/v4/pkg/postrenderer"
 )
 
 type helmReleasePostRender struct {
@@ -18,14 +17,14 @@ type helmReleasePostRenderSpec struct {
 }
 
 type combinedPostRenderer struct {
-	renderers []postrenderer.PostRenderer
+	renderers []PostRenderer
 }
 
 func newCombinedPostRenderer() combinedPostRenderer {
-	return combinedPostRenderer{renderers: make([]postrenderer.PostRenderer, 0)}
+	return combinedPostRenderer{renderers: make([]PostRenderer, 0)}
 }
 
-func (c *combinedPostRenderer) addRenderer(renderer postrenderer.PostRenderer) {
+func (c *combinedPostRenderer) addRenderer(renderer PostRenderer) {
 	c.renderers = append(c.renderers, renderer)
 }
 
@@ -42,7 +41,7 @@ func (c *combinedPostRenderer) Run(renderedManifests *bytes.Buffer) (modifiedMan
 
 // buildPostRenderers creates the post-renderer chain for a HelmRelease.
 // Order: Kustomize patches → CommonMetadata → Origin labels
-func buildPostRenderers(hr *v2.HelmRelease) postrenderer.PostRenderer {
+func buildPostRenderers(hr *v2.HelmRelease) PostRenderer {
 	postRenderers := make([]helmReleasePostRender, len(hr.Spec.PostRenderers))
 	for i, renderer := range hr.Spec.PostRenderers {
 		postRenderers[i] = helmReleasePostRender{Kustomize: renderer.Kustomize}
@@ -50,7 +49,7 @@ func buildPostRenderers(hr *v2.HelmRelease) postrenderer.PostRenderer {
 	return buildPostRenderersFromFields(hr.Name, hr.Namespace, postRenderers, hr.Spec.CommonMetadata)
 }
 
-func buildPostRenderersFromSpec(name, namespace string, spec map[string]any) (postrenderer.PostRenderer, error) {
+func buildPostRenderersFromSpec(name, namespace string, spec map[string]any) (PostRenderer, error) {
 	parsed := helmReleasePostRenderSpec{}
 	if spec != nil {
 		data, err := json.Marshal(spec)
@@ -64,7 +63,7 @@ func buildPostRenderersFromSpec(name, namespace string, spec map[string]any) (po
 	return buildPostRenderersFromFields(name, namespace, parsed.PostRenderers, parsed.CommonMetadata), nil
 }
 
-func buildPostRenderersFromFields(name, namespace string, postRenderers []helmReleasePostRender, commonMetadata *v2.CommonMetadata) postrenderer.PostRenderer {
+func buildPostRenderersFromFields(name, namespace string, postRenderers []helmReleasePostRender, commonMetadata *v2.CommonMetadata) PostRenderer {
 	var combined = newCombinedPostRenderer()
 	for _, r := range postRenderers {
 		if r.Kustomize != nil {

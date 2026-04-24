@@ -15,7 +15,6 @@ import (
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/chart/v2/loader"
 	helmcli "helm.sh/helm/v4/pkg/cli"
-	"helm.sh/helm/v4/pkg/postrenderer"
 	"helm.sh/helm/v4/pkg/registry"
 	ri "helm.sh/helm/v4/pkg/release"
 	"helm.sh/helm/v4/pkg/repo/v1"
@@ -46,7 +45,7 @@ type RenderTask struct {
 	disableHooks    bool
 	includeCRDs     bool
 	isOCI           bool
-	postRenderer    postrenderer.PostRenderer
+	postRenderer    PostRenderer
 }
 
 // NewRunner creates a new Helm runner.
@@ -196,7 +195,7 @@ func (r *Runner) renderChart(ctx context.Context, t *RenderTask) (resmap.ResMap,
 	return parseManifests(manifests.Bytes(), r.logger)
 }
 
-func runPostRenderer(renderer postrenderer.PostRenderer, manifests *bytes.Buffer) (*bytes.Buffer, error) {
+func runPostRenderer(renderer PostRenderer, manifests *bytes.Buffer) (*bytes.Buffer, error) {
 	if renderer == nil {
 		return manifests, nil
 	}

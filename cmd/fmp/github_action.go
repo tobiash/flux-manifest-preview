@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,8 +13,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/tobiash/flux-manifest-preview/pkg/config"
-	"github.com/tobiash/flux-manifest-preview/pkg/diff"
 	"github.com/tobiash/flux-manifest-preview/pkg/githubaction"
+	"github.com/tobiash/flux-manifest-preview/pkg/policy"
 	"github.com/tobiash/flux-manifest-preview/pkg/preview"
 )
 
@@ -124,9 +125,13 @@ func runGitHubAction(cmd *cobra.Command, args []string) error {
 		act.SetOutput("comment-file", report.CommentFile)
 		act.SetOutput("report-file", report.ReportFile)
 		act.SetOutput("export-dir", report.ExportDir)
+		act.SetOutput("classifications-json", mustJSON(report.Classifications))
+		act.SetOutput("violations-json", mustJSON(report.Violations))
+		act.SetOutput("labels-json", mustJSON(report.Labels))
+		act.SetOutput("policy-failed", fmt.Sprintf("%t", report.PolicyFailed))
 	}
 
-	if req.ShouldFail(report) {
+	if req.ShouldFail(report) || report.PolicyFailed {
 		return fmt.Errorf("fmp action failed: status=%s errors=%d warnings=%d", report.Status, len(report.Errors), len(report.Warnings))
 	}
 	return nil
@@ -135,7 +140,12 @@ func runGitHubAction(cmd *cobra.Command, args []string) error {
 func executeAction(log logr.Logger, req *githubaction.Request) (*githubaction.ActionReport, error) {
 	var diffText bytes.Buffer
 
-	opts, err := buildActionOpts(log, req)
+	cfg, err := loadActionConfig(req)
+	if err != nil {
+		return nil, err
+	}
+
+	opts, err := buildActionOpts(log, req, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -181,6 +191,21 @@ func executeAction(log logr.Logger, req *githubaction.Request) (*githubaction.Ac
 		KindBreakdown:     buildKindBreakdown(result),
 	}
 
+	if cfg != nil {
+		policyResult, err := policy.Evaluate(context.Background(), result, cfg.Policies, policyBaseDir(req.ConfigRoot(), cfg))
+		if err != nil {
+			return nil, fmt.Errorf("evaluating policies: %w", err)
+		}
+		report.Classifications = policyResult.Classifications
+		report.Violations = policyResult.Violations
+		report.Labels = policyResult.Labels
+		report.PolicyFailures = policyResult.PolicyFailures
+		report.PolicyFailed = policyResult.PolicyFailed
+		if report.PolicyFailed {
+			report.Status = githubaction.StatusError
+		}
+	}
+
 	// Handle exports
 	if req.ExportDir != "" {
 		report.ExportDir = req.ExportDir
@@ -191,18 +216,7 @@ func executeAction(log logr.Logger, req *githubaction.Request) (*githubaction.Ac
 	return report, nil
 }
 
-func buildActionOpts(log logr.Logger, req *githubaction.Request) ([]preview.Opt, error) {
-	var cfg *config.Config
-	var err error
-
-	if req.ConfigFile != "" {
-		cfg, err = config.LoadConfigFromPath(req.ConfigFile)
-	} else {
-		cfg, err = config.LoadConfig(req.ConfigRoot())
-	}
-	if err != nil {
-		return nil, fmt.Errorf("loading config: %w", err)
-	}
+func buildActionOpts(log logr.Logger, req *githubaction.Request, cfg *config.Config) ([]preview.Opt, error) {
 
 	paths := req.Paths
 	if len(paths) == 0 && cfg != nil && len(cfg.Paths) > 0 {
@@ -277,6 +291,17 @@ func buildActionOpts(log logr.Logger, req *githubaction.Request) ([]preview.Opt,
 	return opts, nil
 }
 
+func loadActionConfig(req *githubaction.Request) (*config.Config, error) {
+	cfg, err := loadConfigForRepo(req.ConfigRoot(), req.ConfigFile)
+	if err != nil {
+		if req.ConfigFile != "" {
+			return nil, fmt.Errorf("loading config %s: %w", req.ConfigFile, err)
+		}
+		return nil, fmt.Errorf("loading config: %w", err)
+	}
+	return cfg, nil
+}
+
 func writeJSON(path string, v any) error {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -285,29 +310,16 @@ func writeJSON(path string, v any) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-func buildKindBreakdown(result *diff.DiffResult) map[string]githubaction.ChangeBreakdown {
-	breakdown := make(map[string]githubaction.ChangeBreakdown)
-
-	for _, change := range result.Added {
-		entry := breakdown[change.Kind]
-		entry.Added++
-		entry.Total++
-		breakdown[change.Kind] = entry
+func mustJSON(v any) string {
+	if v == nil {
+		return "[]"
 	}
-
-	for _, change := range result.Modified {
-		entry := breakdown[change.Kind]
-		entry.Modified++
-		entry.Total++
-		breakdown[change.Kind] = entry
+	data, err := json.Marshal(v)
+	if err != nil {
+		return "[]"
 	}
-
-	for _, change := range result.Deleted {
-		entry := breakdown[change.Kind]
-		entry.Deleted++
-		entry.Total++
-		breakdown[change.Kind] = entry
+	if string(data) == "null" {
+		return "[]"
 	}
-
-	return breakdown
+	return string(data)
 }

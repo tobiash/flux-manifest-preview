@@ -1,6 +1,10 @@
 package githubaction
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/tobiash/flux-manifest-preview/pkg/policy"
+)
 
 // Status values for ActionReport.
 const (
@@ -35,6 +39,12 @@ type ActionReport struct {
 	ByKind        map[string]int             `json:"by_kind,omitempty"`
 	KindBreakdown map[string]ChangeBreakdown `json:"kind_breakdown,omitempty"`
 	ByProducer    map[string]int             `json:"by_producer,omitempty"`
+
+	Classifications []policy.Classification `json:"classifications,omitempty"`
+	Violations      []policy.Violation      `json:"violations,omitempty"`
+	Labels          []string                `json:"labels,omitempty"`
+	PolicyFailures  []string                `json:"policy_failures,omitempty"`
+	PolicyFailed    bool                    `json:"policy_failed"`
 }
 
 // ChangeBreakdown holds added/modified/deleted counts for a category like kind.
