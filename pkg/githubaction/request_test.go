@@ -16,3 +16,23 @@ func TestGetInputSupportsUnderscoreAndHyphenEnvKeys(t *testing.T) {
 		t.Fatalf("getInput(repo-b) with hyphen env = %q, want /tmp/repo-b", got)
 	}
 }
+
+func TestParseRequestFromEnvSupportsMultiplePaths(t *testing.T) {
+	t.Setenv("INPUT_PATHS", "clusters/kube\nclusters/prod\nclusters/edge")
+
+	req, err := ParseRequestFromEnv()
+	if err != nil {
+		t.Fatalf("ParseRequestFromEnv() error = %v", err)
+	}
+
+	want := []string{"clusters/kube", "clusters/prod", "clusters/edge"}
+	if len(req.Paths) != len(want) {
+		t.Fatalf("len(req.Paths) = %d, want %d", len(req.Paths), len(want))
+	}
+
+	for i := range want {
+		if req.Paths[i] != want[i] {
+			t.Fatalf("req.Paths[%d] = %q, want %q", i, req.Paths[i], want[i])
+		}
+	}
+}

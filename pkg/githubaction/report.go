@@ -32,8 +32,17 @@ type ActionReport struct {
 	ResourcesDeleted  int `json:"resources_deleted"`
 	ResourcesTotal    int `json:"resources_total"`
 
-	ByKind     map[string]int `json:"by_kind,omitempty"`
-	ByProducer map[string]int `json:"by_producer,omitempty"`
+	ByKind        map[string]int             `json:"by_kind,omitempty"`
+	KindBreakdown map[string]ChangeBreakdown `json:"kind_breakdown,omitempty"`
+	ByProducer    map[string]int             `json:"by_producer,omitempty"`
+}
+
+// ChangeBreakdown holds added/modified/deleted counts for a category like kind.
+type ChangeBreakdown struct {
+	Added    int `json:"added"`
+	Modified int `json:"modified"`
+	Deleted  int `json:"deleted"`
+	Total    int `json:"total"`
 }
 
 // StatusFromCounts derives the overall status from changes, warnings, and errors.

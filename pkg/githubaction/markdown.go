@@ -2,6 +2,7 @@ package githubaction
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -22,24 +23,9 @@ func RenderSummaryMarkdown(req *Request, report *ActionReport) string {
 		emoji = "❓"
 	}
 	_, _ = fmt.Fprintf(&b, "**Status:** %s %s\n\n", emoji, strings.ToUpper(report.Status))
-
-	b.WriteString("### Resource Changes\n\n")
-	b.WriteString("| Metric | Count |\n")
-	b.WriteString("| :--- | ---: |\n")
-	_, _ = fmt.Fprintf(&b, "| Added | %d |\n", report.ResourcesAdded)
-	_, _ = fmt.Fprintf(&b, "| Modified | %d |\n", report.ResourcesModified)
-	_, _ = fmt.Fprintf(&b, "| Deleted | %d |\n", report.ResourcesDeleted)
-	_, _ = fmt.Fprintf(&b, "| Total Changed | %d |\n\n", report.ResourcesTotal)
-
-	if len(report.ByKind) > 0 {
-		b.WriteString("### By Kind\n\n")
-		b.WriteString("| Kind | Count |\n")
-		b.WriteString("| :--- | ---: |\n")
-		for _, pair := range sortedMap(report.ByKind) {
-			_, _ = fmt.Fprintf(&b, "| %s | %s |\n", pair[0], pair[1])
-		}
-		b.WriteString("\n")
-	}
+	b.WriteString(renderChangeSummary(report))
+	b.WriteString("\n")
+	writeKindBreakdown(&b, report)
 
 	if len(report.Warnings) > 0 {
 		b.WriteString("### ⚠️ Warnings\n\n")
@@ -100,21 +86,9 @@ func RenderCommentMarkdown(req *Request, report *ActionReport) string {
 		b.WriteString("**No manifest changes detected.**\n\n")
 	}
 
-	b.WriteString("| Metric | Count |\n")
-	b.WriteString("| :--- | ---: |\n")
-	_, _ = fmt.Fprintf(&b, "| Added | %d |\n", report.ResourcesAdded)
-	_, _ = fmt.Fprintf(&b, "| Modified | %d |\n", report.ResourcesModified)
-	_, _ = fmt.Fprintf(&b, "| Deleted | %d |\n", report.ResourcesDeleted)
-	_, _ = fmt.Fprintf(&b, "| Total Changed | %d |\n\n", report.ResourcesTotal)
-
-	if len(report.ByKind) > 0 {
-		b.WriteString("| Kind | Count |\n")
-		b.WriteString("| :--- | ---: |\n")
-		for _, pair := range sortedMap(report.ByKind) {
-			_, _ = fmt.Fprintf(&b, "| %s | %s |\n", pair[0], pair[1])
-		}
-		b.WriteString("\n")
-	}
+	b.WriteString(renderChangeSummary(report))
+	b.WriteString("\n")
+	writeKindBreakdown(&b, report)
 
 	if len(report.Warnings) > 0 {
 		b.WriteString("**Warnings:**\n")
@@ -155,6 +129,67 @@ func escapeMarkdown(s string) string {
 	// Minimal escaping for markdown inline use
 	s = strings.ReplaceAll(s, "|", "\\|")
 	return s
+}
+
+func renderChangeSummary(report *ActionReport) string {
+	if report.ResourcesTotal == 0 {
+		return "✅ **No resource changes.**\n\n"
+	}
+
+	return fmt.Sprintf(
+		"🟢 **%d** to add, 🟡 **%d** to change, 🔴 **%d** to destroy.\n\n",
+		report.ResourcesAdded,
+		report.ResourcesModified,
+		report.ResourcesDeleted,
+	)
+}
+
+func writeKindBreakdown(b *strings.Builder, report *ActionReport) {
+	rows := sortedKindBreakdown(report.KindBreakdown)
+	if len(rows) == 0 {
+		return
+	}
+
+	_, _ = fmt.Fprintf(b, "<details>\n<summary>Changed resources by kind (%d kinds)</summary>\n\n", len(rows))
+	b.WriteString("| Kind | Added | Modified | Deleted | Total |\n")
+	b.WriteString("| :--- | ---: | ---: | ---: | ---: |\n")
+	for _, row := range rows {
+		_, _ = fmt.Fprintf(
+			b,
+			"| %s | %d | %d | %d | %d |\n",
+			row.Kind,
+			row.Breakdown.Added,
+			row.Breakdown.Modified,
+			row.Breakdown.Deleted,
+			row.Breakdown.Total,
+		)
+	}
+	b.WriteString("\n</details>\n\n")
+}
+
+type kindBreakdownRow struct {
+	Kind      string
+	Breakdown ChangeBreakdown
+}
+
+func sortedKindBreakdown(m map[string]ChangeBreakdown) []kindBreakdownRow {
+	if len(m) == 0 {
+		return nil
+	}
+
+	rows := make([]kindBreakdownRow, 0, len(m))
+	for kind, breakdown := range m {
+		rows = append(rows, kindBreakdownRow{Kind: kind, Breakdown: breakdown})
+	}
+
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Breakdown.Total == rows[j].Breakdown.Total {
+			return rows[i].Kind < rows[j].Kind
+		}
+		return rows[i].Breakdown.Total > rows[j].Breakdown.Total
+	})
+
+	return rows
 }
 
 func sortedMap(m map[string]int) [][2]string {

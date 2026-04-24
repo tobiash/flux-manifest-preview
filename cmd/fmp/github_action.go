@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/tobiash/flux-manifest-preview/pkg/config"
+	"github.com/tobiash/flux-manifest-preview/pkg/diff"
 	"github.com/tobiash/flux-manifest-preview/pkg/githubaction"
 	"github.com/tobiash/flux-manifest-preview/pkg/preview"
 )
@@ -177,6 +178,7 @@ func executeAction(log logr.Logger, req *githubaction.Request) (*githubaction.Ac
 		ResourcesDeleted:  len(result.Deleted),
 		ResourcesTotal:    result.TotalChanged(),
 		ByKind:            result.ByKind(),
+		KindBreakdown:     buildKindBreakdown(result),
 	}
 
 	// Handle exports
@@ -281,4 +283,31 @@ func writeJSON(path string, v any) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0o644)
+}
+
+func buildKindBreakdown(result *diff.DiffResult) map[string]githubaction.ChangeBreakdown {
+	breakdown := make(map[string]githubaction.ChangeBreakdown)
+
+	for _, change := range result.Added {
+		entry := breakdown[change.Kind]
+		entry.Added++
+		entry.Total++
+		breakdown[change.Kind] = entry
+	}
+
+	for _, change := range result.Modified {
+		entry := breakdown[change.Kind]
+		entry.Modified++
+		entry.Total++
+		breakdown[change.Kind] = entry
+	}
+
+	for _, change := range result.Deleted {
+		entry := breakdown[change.Kind]
+		entry.Deleted++
+		entry.Total++
+		breakdown[change.Kind] = entry
+	}
+
+	return breakdown
 }

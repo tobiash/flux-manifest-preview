@@ -15,8 +15,12 @@ func TestRenderSummaryMarkdown(t *testing.T) {
 		ResourcesDeleted:  1,
 		ResourcesTotal:    8,
 		ByKind:            map[string]int{"Deployment": 3, "ConfigMap": 2},
-		Warnings:          []string{"helm chart not found"},
-		DiffPreview:       "@@ -1 +1 @@\n-foo\n+bar",
+		KindBreakdown: map[string]ChangeBreakdown{
+			"Deployment": {Modified: 3, Total: 3},
+			"ConfigMap":  {Added: 2, Total: 2},
+		},
+		Warnings:    []string{"helm chart not found"},
+		DiffPreview: "@@ -1 +1 @@\n-foo\n+bar",
 	}
 
 	md := RenderSummaryMarkdown(req, report)
@@ -26,11 +30,14 @@ func TestRenderSummaryMarkdown(t *testing.T) {
 	if !strings.Contains(md, "CHANGED") {
 		t.Error("missing status")
 	}
-	if !strings.Contains(md, "2") {
-		t.Error("missing added count")
+	if !strings.Contains(md, "2** to add, 🟡 **5** to change, 🔴 **1** to destroy") {
+		t.Error("missing change summary")
 	}
 	if !strings.Contains(md, "ConfigMap") {
 		t.Error("missing kind breakdown")
+	}
+	if !strings.Contains(md, "| Kind | Added | Modified | Deleted | Total |") {
+		t.Error("missing detailed kind table")
 	}
 	if !strings.Contains(md, "helm chart not found") {
 		t.Error("missing warning")
@@ -55,6 +62,9 @@ func TestRenderCommentMarkdown(t *testing.T) {
 	if !strings.Contains(md, "No manifest changes detected") {
 		t.Error("missing no-changes text")
 	}
+	if !strings.Contains(md, "No resource changes") {
+		t.Error("missing no-changes summary")
+	}
 	if !strings.Contains(md, "fmp-comment-marker") {
 		t.Error("missing comment marker")
 	}
@@ -71,6 +81,9 @@ func TestRenderCommentMarkdownWithDiff(t *testing.T) {
 		ResourcesTotal:    1,
 		DiffPreview:       "+apiVersion: v1",
 		ByKind:            map[string]int{"ConfigMap": 1},
+		KindBreakdown: map[string]ChangeBreakdown{
+			"ConfigMap": {Added: 1, Total: 1},
+		},
 	}
 
 	md := RenderCommentMarkdown(req, report)
@@ -82,6 +95,9 @@ func TestRenderCommentMarkdownWithDiff(t *testing.T) {
 	}
 	if !strings.Contains(md, "ConfigMap") {
 		t.Error("missing kind table")
+	}
+	if !strings.Contains(md, "1** to add, 🟡 **0** to change, 🔴 **0** to destroy") {
+		t.Error("missing terraform-style summary")
 	}
 }
 

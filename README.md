@@ -217,9 +217,23 @@ Use `fmp` in your CI/CD pipelines to review PRs automatically.
   run: kubeconform ./rendered/*.yaml
 ```
 
+**Preview multiple clusters from one repo:**
+```yaml
+- uses: tobiash/flux-manifest-preview@vX.Y.Z
+  with:
+    repo: .
+    base-ref: origin/main
+    paths: |
+      clusters/kube
+      clusters/prod
+      clusters/edge
+```
+
 **Note:** `sops-decrypt` is intentionally unsupported in the GitHub Action to avoid leaking decrypted content into logs, summaries, comments, or artifacts.
 
 For local action development or branch testing, build `fmp` ahead of time and pass it via `binary`. The action no longer builds Go code for you.
+
+`paths` and legacy `kustomizations` inputs are newline-separated, so pointing the action at one subdirectory per cluster is already supported.
 
 ---
 
