@@ -3,12 +3,9 @@ package diff
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 
-	"github.com/hexops/gotextdiff"
-	"github.com/hexops/gotextdiff/myers"
-	"github.com/hexops/gotextdiff/span"
+	k8qdiff "github.com/tobiash/k8q/pkg/diff"
 	"github.com/tobiash/flux-manifest-preview/pkg/render"
 	"sigs.k8s.io/kustomize/kyaml/resid"
 )
@@ -23,9 +20,9 @@ type ObjectRef struct {
 
 // DiffResultJSON is the JSON representation of a manifest diff.
 type DiffResultJSON struct {
-	Added    []map[string]any  `json:"added"`
-	Deleted  []ObjectRef       `json:"deleted"`
-	Modified []DiffChangeJSON  `json:"modified"`
+	Added    []map[string]any `json:"added"`
+	Deleted  []ObjectRef      `json:"deleted"`
+	Modified []DiffChangeJSON `json:"modified"`
 }
 
 // DiffChangeJSON represents a modified resource with before/after snapshots.
@@ -94,10 +91,8 @@ func (r *DiffResult) ToJSON() *DiffResultJSON {
 		var diffBuf bytes.Buffer
 		oldYaml := mustYamlMap(c.Old)
 		newYaml := mustYamlMap(c.New)
-		edits := myers.ComputeEdits(span.URIFromPath(c.ID.String()), oldYaml, newYaml)
-		if _, err := fmt.Fprint(&diffBuf, gotextdiff.ToUnified(c.ID.String(), c.ID.String(), oldYaml, edits)); err == nil {
-			// ignore write error
-		}
+		u := k8qdiff.ComputeDiff(c.ID.String(), oldYaml, newYaml)
+		k8qdiff.Format(&diffBuf, u)
 		out.Modified = append(out.Modified, DiffChangeJSON{
 			ObjectRef: ObjectRef{
 				APIVersion: gvkAPIVersion(c.ID.Gvk.Group, c.ID.Gvk.Version),
@@ -135,63 +130,63 @@ func mustYamlMap(m map[string]any) string {
 // DiffWithResult computes a unified diff and returns structured change metadata.
 // The unified diff text is written to w.
 func DiffWithResult(a, b *render.Render, w io.Writer) (*DiffResult, error) {
-	var added, deleted, modified []resid.ResId
-	for _, ra := range a.Resources() {
-		if _, err := b.GetByCurrentId(ra.CurId()); err != nil {
-			deleted = append(deleted, ra.CurId())
-		} else {
-			modified = append(modified, ra.CurId())
-		}
-	}
-	for _, rb := range b.Resources() {
-		if _, err := a.GetByCurrentId(rb.CurId()); err != nil {
-			added = append(added, rb.CurId())
-		}
+	result, err := k8qdiff.DiffNodes(renderToRNodes(a), renderToRNodes(b))
+	if err != nil {
+		return nil, err
 	}
 
-	result := &DiffResult{}
+	fmpResult := &DiffResult{}
 
-	for _, c := range added {
-		r, _ := b.GetByCurrentId(c)
+	for _, key := range result.Added {
+		id := objectRefToResId(key)
+		r, _ := b.GetByCurrentId(id)
+		if r == nil {
+			continue
+		}
 		yaml := r.MustYaml()
 		obj, _ := r.Map()
-		result.Added = append(result.Added, ResourceChange{
-			ID:        c,
+		fmpResult.Added = append(fmpResult.Added, ResourceChange{
+			ID:        id,
 			Kind:      r.GetKind(),
 			Name:      r.GetName(),
 			Namespace: r.GetNamespace(),
-			Producer:  b.ProducerForID(c),
+			Producer:  b.ProducerForID(id),
 			Action:    "added",
 			New:       obj,
 		})
-		edits := myers.ComputeEdits(span.URIFromPath(c.String()), "", yaml)
-		if _, err := fmt.Fprint(w, gotextdiff.ToUnified(c.String(), c.String(), "", edits)); err != nil {
-			return nil, err
-		}
+		u := k8qdiff.ComputeDiff(id.String(), "", yaml)
+		k8qdiff.Format(w, u)
 	}
 
-	for _, d := range deleted {
-		r, _ := a.GetByCurrentId(d)
+	for _, key := range result.Removed {
+		id := objectRefToResId(key)
+		r, _ := a.GetByCurrentId(id)
+		if r == nil {
+			continue
+		}
 		yaml := r.MustYaml()
 		obj, _ := r.Map()
-		result.Deleted = append(result.Deleted, ResourceChange{
-			ID:        d,
+		fmpResult.Deleted = append(fmpResult.Deleted, ResourceChange{
+			ID:        id,
 			Kind:      r.GetKind(),
 			Name:      r.GetName(),
 			Namespace: r.GetNamespace(),
-			Producer:  a.ProducerForID(d),
+			Producer:  a.ProducerForID(id),
 			Action:    "deleted",
 			Old:       obj,
 		})
-		edits := myers.ComputeEdits(span.URIFromPath(d.String()), yaml, "")
-		if _, err := fmt.Fprint(w, gotextdiff.ToUnified(d.String(), d.String(), yaml, edits)); err != nil {
-			return nil, err
-		}
+		u := k8qdiff.ComputeDiff(id.String(), yaml, "")
+		k8qdiff.Format(w, u)
 	}
 
-	for _, m := range modified {
-		ar, _ := a.GetByCurrentId(m)
-		br, _ := b.GetByCurrentId(m)
+	for _, change := range result.Modified {
+		id := objectRefToResId(change.Key)
+		ar, _ := a.GetByCurrentId(id)
+		br, _ := b.GetByCurrentId(id)
+
+		if ar == nil || br == nil {
+			continue
+		}
 
 		aYaml := ar.MustYaml()
 		bYaml := br.MustYaml()
@@ -199,22 +194,21 @@ func DiffWithResult(a, b *render.Render, w io.Writer) (*DiffResult, error) {
 			continue
 		}
 
-		result.Modified = append(result.Modified, ResourceChange{
-			ID:        m,
+		fmpResult.Modified = append(fmpResult.Modified, ResourceChange{
+			ID:        id,
 			Kind:      br.GetKind(),
 			Name:      br.GetName(),
 			Namespace: br.GetNamespace(),
-			Producer:  b.ProducerForID(m),
+			Producer:  b.ProducerForID(id),
 			Action:    "modified",
 			Old:       mapOrNil(ar),
 			New:       mapOrNil(br),
 		})
-		edits := myers.ComputeEdits(span.URIFromPath(m.String()), aYaml, bYaml)
-		if _, err := fmt.Fprint(w, gotextdiff.ToUnified(m.String(), m.String(), aYaml, edits)); err != nil {
-			return nil, err
-		}
+		u := k8qdiff.ComputeDiff(id.String(), aYaml, bYaml)
+		k8qdiff.Format(w, u)
 	}
-	return result, nil
+
+	return fmpResult, nil
 }
 
 func mapOrNil(res interface {
