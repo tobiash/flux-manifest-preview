@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -74,6 +75,49 @@ func TestCIReportsMissingEnv(t *testing.T) {
 	}
 }
 
+func TestDiffOutputs(t *testing.T) {
+	t.Run("raw diff only default", func(t *testing.T) {
+		resetGlobals()
+		stdout := &bytes.Buffer{}
+		stderr := &bytes.Buffer{}
+		summaryOut, diffOut := diffOutputs(stdout, stderr)
+		if summaryOut != io.Discard {
+			t.Fatal("expected summary output to be discarded by default")
+		}
+		if diffOut != stdout {
+			t.Fatal("expected diff output to go to stdout by default")
+		}
+	})
+
+	t.Run("summary to stderr", func(t *testing.T) {
+		resetGlobals()
+		diffSummary = true
+		stdout := &bytes.Buffer{}
+		stderr := &bytes.Buffer{}
+		summaryOut, diffOut := diffOutputs(stdout, stderr)
+		if summaryOut != stderr {
+			t.Fatal("expected summary output to go to stderr")
+		}
+		if diffOut != stdout {
+			t.Fatal("expected diff output to remain on stdout")
+		}
+	})
+
+	t.Run("summary only", func(t *testing.T) {
+		resetGlobals()
+		diffSummaryOnly = true
+		stdout := &bytes.Buffer{}
+		stderr := &bytes.Buffer{}
+		summaryOut, diffOut := diffOutputs(stdout, stderr)
+		if summaryOut != stdout {
+			t.Fatal("expected summary-only output on stdout")
+		}
+		if diffOut != io.Discard {
+			t.Fatal("expected diff output to be discarded in summary-only mode")
+		}
+	})
+}
+
 func resetGlobals() {
 	kustomizations = nil
 	recursive = false
@@ -88,6 +132,8 @@ func resetGlobals() {
 	configFile = ""
 	outputFormat = ""
 	helmRelease = ""
+	diffSummary = false
+	diffSummaryOnly = false
 	initConfig = false
 	helmRegistryConfig = ""
 	helmRepositoryConfig = ""

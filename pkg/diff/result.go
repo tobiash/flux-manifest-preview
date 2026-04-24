@@ -1,6 +1,8 @@
 package diff
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 
@@ -10,6 +12,30 @@ import (
 	"github.com/tobiash/flux-manifest-preview/pkg/render"
 	"sigs.k8s.io/kustomize/kyaml/resid"
 )
+
+// ObjectRef mirrors the Kubernetes ObjectReference shape.
+type ObjectRef struct {
+	APIVersion string `json:"apiVersion"`
+	Kind       string `json:"kind"`
+	Name       string `json:"name"`
+	Namespace  string `json:"namespace,omitempty"`
+}
+
+// DiffResultJSON is the JSON representation of a manifest diff.
+type DiffResultJSON struct {
+	Added    []map[string]any  `json:"added"`
+	Deleted  []ObjectRef       `json:"deleted"`
+	Modified []DiffChangeJSON  `json:"modified"`
+}
+
+// DiffChangeJSON represents a modified resource with before/after snapshots.
+type DiffChangeJSON struct {
+	ObjectRef   ObjectRef      `json:"objectRef"`
+	Producer    string         `json:"producer,omitempty"`
+	Old         map[string]any `json:"old"`
+	New         map[string]any `json:"new"`
+	UnifiedDiff string         `json:"unifiedDiff"`
+}
 
 // ResourceChange describes a single resource change in a diff.
 type ResourceChange struct {
@@ -48,6 +74,62 @@ func (r *DiffResult) ByKind() map[string]int {
 		m[c.Kind]++
 	}
 	return m
+}
+
+// ToJSON converts the diff result to a JSON-serializable structure.
+func (r *DiffResult) ToJSON() *DiffResultJSON {
+	out := &DiffResultJSON{}
+	for _, c := range r.Added {
+		out.Added = append(out.Added, c.New)
+	}
+	for _, c := range r.Deleted {
+		out.Deleted = append(out.Deleted, ObjectRef{
+			APIVersion: gvkAPIVersion(c.ID.Gvk.Group, c.ID.Gvk.Version),
+			Kind:       c.Kind,
+			Name:       c.Name,
+			Namespace:  c.Namespace,
+		})
+	}
+	for _, c := range r.Modified {
+		var diffBuf bytes.Buffer
+		oldYaml := mustYamlMap(c.Old)
+		newYaml := mustYamlMap(c.New)
+		edits := myers.ComputeEdits(span.URIFromPath(c.ID.String()), oldYaml, newYaml)
+		if _, err := fmt.Fprint(&diffBuf, gotextdiff.ToUnified(c.ID.String(), c.ID.String(), oldYaml, edits)); err == nil {
+			// ignore write error
+		}
+		out.Modified = append(out.Modified, DiffChangeJSON{
+			ObjectRef: ObjectRef{
+				APIVersion: gvkAPIVersion(c.ID.Gvk.Group, c.ID.Gvk.Version),
+				Kind:       c.Kind,
+				Name:       c.Name,
+				Namespace:  c.Namespace,
+			},
+			Producer:    c.Producer,
+			Old:         c.Old,
+			New:         c.New,
+			UnifiedDiff: diffBuf.String(),
+		})
+	}
+	return out
+}
+
+func gvkAPIVersion(group, version string) string {
+	if group == "" {
+		return version
+	}
+	return group + "/" + version
+}
+
+func mustYamlMap(m map[string]any) string {
+	if m == nil {
+		return ""
+	}
+	b, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // DiffWithResult computes a unified diff and returns structured change metadata.

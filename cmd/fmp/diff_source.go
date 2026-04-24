@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -117,6 +118,89 @@ func runDiff(log logr.Logger, args []string, summaryOut io.Writer, diffOut io.Wr
 	if _, err = io.Copy(diffOut, &diffText); err != nil {
 		return err
 	}
+	if policyResult.PolicyFailed {
+		return fmt.Errorf("policy enforcement failed: %s", strings.Join(policyResult.PolicyFailures, ", "))
+	}
+	return nil
+}
+
+func runDiffJSON(log logr.Logger, args []string, out io.Writer) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("determining current directory: %w", err)
+	}
+
+	plan, err := resolveDiffPlan(args, cwd)
+	if err != nil {
+		return err
+	}
+
+	leftPath, leftCleanup, err := plan.left.materialize(context.Background())
+	if err != nil {
+		return err
+	}
+	if leftCleanup != nil {
+		defer leftCleanup()
+	}
+
+	rightPath, rightCleanup, err := plan.right.materialize(context.Background())
+	if err != nil {
+		return err
+	}
+	if rightCleanup != nil {
+		defer rightCleanup()
+	}
+
+	opts, err := buildOpts(log, plan.configRoot)
+	if err != nil {
+		return err
+	}
+	if helmRelease != "" {
+		opts = append(opts, preview.WithHelmReleaseFilter(helmRelease))
+	}
+
+	p, err := preview.New(opts...)
+	if err != nil {
+		return fmt.Errorf("error creating preview: %w", err)
+	}
+
+	var diffText bytes.Buffer
+	result, err := p.DiffResult(leftPath, rightPath, &diffText)
+	if err != nil {
+		return err
+	}
+
+	cfg, err := loadConfigForRepo(plan.configRoot, configFile)
+	if err != nil {
+		if configFile != "" {
+			return fmt.Errorf("loading config %s: %w", configFile, err)
+		}
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	var policyCfg *config.PolicyConfig
+	if cfg != nil {
+		policyCfg = cfg.Policies
+	}
+	policyResult, err := policy.Evaluate(context.Background(), result, policyCfg, policyBaseDir(plan.configRoot, cfg))
+	if err != nil {
+		return fmt.Errorf("evaluating policies: %w", err)
+	}
+
+	jsonResult := result.ToJSON()
+	output := map[string]interface{}{
+		"added":    jsonResult.Added,
+		"deleted":  jsonResult.Deleted,
+		"modified": jsonResult.Modified,
+		"policy":   policyResult,
+	}
+
+	enc := json.NewEncoder(out)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(output); err != nil {
+		return fmt.Errorf("encoding JSON: %w", err)
+	}
+
 	if policyResult.PolicyFailed {
 		return fmt.Errorf("policy enforcement failed: %s", strings.Join(policyResult.PolicyFailures, ", "))
 	}

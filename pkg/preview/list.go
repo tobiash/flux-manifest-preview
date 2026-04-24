@@ -10,6 +10,34 @@ import (
 	"sigs.k8s.io/kustomize/kyaml/resid"
 )
 
+// ObjectRef mirrors the Kubernetes ObjectReference shape.
+type ObjectRef struct {
+	APIVersion string `json:"apiVersion"`
+	Kind       string `json:"kind"`
+	Name       string `json:"name"`
+	Namespace  string `json:"namespace,omitempty"`
+}
+
+// KustomizationItem is the JSON representation of a Flux Kustomization.
+type KustomizationItem struct {
+	ObjectRef ObjectRef `json:"objectRef"`
+	Path      string    `json:"path,omitempty"`
+	SourceRef *ObjectRef `json:"sourceRef,omitempty"`
+}
+
+// HelmReleaseItem is the JSON representation of a HelmRelease.
+type HelmReleaseItem struct {
+	ObjectRef ObjectRef `json:"objectRef"`
+	Chart     string    `json:"chart,omitempty"`
+	Version   string    `json:"version,omitempty"`
+	SourceRef *ObjectRef `json:"sourceRef,omitempty"`
+}
+
+// GetResourcesOutput is the JSON envelope for listing Flux resources.
+type GetResourcesOutput struct {
+	Items interface{} `json:"items"`
+}
+
 // KustomizationInfo holds extracted fields from a Flux Kustomization CR.
 type KustomizationInfo struct {
 	Name       string
@@ -106,6 +134,57 @@ func extractHelmReleases(r *render.Render) []HelmReleaseInfo {
 
 func matchListGVK(a, b resid.Gvk) bool {
 	return a.Group == b.Group && a.Kind == b.Kind
+}
+
+// KustomizationsToJSON converts KustomizationInfo slices to a JSON-serializable envelope.
+func KustomizationsToJSON(ks []KustomizationInfo) *GetResourcesOutput {
+	items := make([]KustomizationItem, 0, len(ks))
+	for _, k := range ks {
+		item := KustomizationItem{
+			ObjectRef: ObjectRef{
+				APIVersion: "kustomize.toolkit.fluxcd.io/v1",
+				Kind:       "Kustomization",
+				Name:       k.Name,
+				Namespace:  k.Namespace,
+			},
+			Path: k.Path,
+		}
+		if k.SourceKind != "" && k.SourceName != "" {
+			item.SourceRef = &ObjectRef{
+				Kind:      k.SourceKind,
+				Name:      k.SourceName,
+				Namespace: k.Namespace,
+			}
+		}
+		items = append(items, item)
+	}
+	return &GetResourcesOutput{Items: items}
+}
+
+// HelmReleasesToJSON converts HelmReleaseInfo slices to a JSON-serializable envelope.
+func HelmReleasesToJSON(hrs []HelmReleaseInfo) *GetResourcesOutput {
+	items := make([]HelmReleaseItem, 0, len(hrs))
+	for _, hr := range hrs {
+		item := HelmReleaseItem{
+			ObjectRef: ObjectRef{
+				APIVersion: "helm.toolkit.fluxcd.io/v2",
+				Kind:       "HelmRelease",
+				Name:       hr.Name,
+				Namespace:  hr.Namespace,
+			},
+			Chart:   hr.Chart,
+			Version: hr.Version,
+		}
+		if hr.SourceKind != "" && hr.SourceName != "" {
+			item.SourceRef = &ObjectRef{
+				Kind:      hr.SourceKind,
+				Name:      hr.SourceName,
+				Namespace: hr.Namespace,
+			}
+		}
+		items = append(items, item)
+	}
+	return &GetResourcesOutput{Items: items}
 }
 
 // PrintKustomizations writes a table of Flux Kustomizations to out.

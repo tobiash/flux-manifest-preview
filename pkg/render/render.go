@@ -280,25 +280,21 @@ func (r *Render) ApplyNamespaceToNew(count int, namespace string) {
 	}
 }
 
-// AsJSON returns the rendered resources as a JSON array.
+// AsJSON returns the rendered resources as a Kubernetes List envelope.
 func (r *Render) AsJSON() ([]byte, error) {
 	resources := r.Resources()
-	buf := make([]byte, 0, len(resources)*256)
-	buf = append(buf, '[')
-	for i, res := range resources {
-		if i > 0 {
-			buf = append(buf, ',')
-		}
+	items := make([]map[string]any, 0, len(resources))
+	for _, res := range resources {
 		m, err := res.Map()
 		if err != nil {
 			continue
 		}
-		data, err := json.Marshal(m)
-		if err != nil {
-			continue
-		}
-		buf = append(buf, data...)
+		items = append(items, m)
 	}
-	buf = append(buf, ']')
-	return buf, nil
+	list := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "List",
+		"items":      items,
+	}
+	return json.MarshalIndent(list, "", "  ")
 }

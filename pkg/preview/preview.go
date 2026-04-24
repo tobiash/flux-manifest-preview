@@ -218,6 +218,18 @@ func (p *Preview) RenderJSON(path string, out io.Writer) error {
 	return nil
 }
 
+// TestResult is the JSON representation of a test run.
+type TestResult struct {
+	Status   string       `json:"status"`
+	Warnings []TestIssue  `json:"warnings,omitempty"`
+	Errors   []TestIssue  `json:"errors,omitempty"`
+}
+
+// TestIssue describes a single warning or error encountered during testing.
+type TestIssue struct {
+	Message string `json:"message"`
+}
+
 // Test validates that all Kustomizations build and HelmReleases render.
 // Returns nil on success, or an error describing the failure.
 func (p *Preview) Test(path string, out io.Writer) error {
@@ -235,6 +247,25 @@ func (p *Preview) Test(path string, out io.Writer) error {
 	}
 	_, _ = fmt.Fprintln(out, "PASS")
 	return nil
+}
+
+// TestJSON validates resources and returns a structured test result.
+func (p *Preview) TestJSON(path string) (*TestResult, error) {
+	result, err := p.loadRepo(path)
+	if err != nil {
+		return &TestResult{
+			Status: "fail",
+			Errors: []TestIssue{{Message: err.Error()}},
+		}, err
+	}
+	var warnings []TestIssue
+	for _, e := range result.errors {
+		warnings = append(warnings, TestIssue{Message: e.Error()})
+	}
+	if len(warnings) > 0 {
+		return &TestResult{Status: "pass_with_warnings", Warnings: warnings}, nil
+	}
+	return &TestResult{Status: "pass"}, nil
 }
 
 // Diff computes and writes the diff between two repository paths.

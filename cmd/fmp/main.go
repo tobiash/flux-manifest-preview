@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -19,21 +21,23 @@ import (
 var expansionError *preview.ExpansionError
 
 var (
-	kustomizations []string
-	recursive      bool
-	renderHelm     bool
-	filtersFile    string
-	filterYAML     string
-	sortOutput     bool
-	excludeCRDs    bool
-	verbose        bool
-	quiet          bool
-	resolveGit     bool
-	sopsDecrypt    bool
-	configFile     string
-	outputFormat   string
-	helmRelease    string
-	initConfig     bool
+	kustomizations  []string
+	recursive       bool
+	renderHelm      bool
+	filtersFile     string
+	filterYAML      string
+	sortOutput      bool
+	excludeCRDs     bool
+	verbose         bool
+	quiet           bool
+	resolveGit      bool
+	sopsDecrypt     bool
+	configFile      string
+	outputFormat    string
+	helmRelease     string
+	diffSummary     bool
+	diffSummaryOnly bool
+	initConfig      bool
 
 	helmRegistryConfig   string
 	helmRepositoryConfig string
@@ -108,10 +112,17 @@ inputs, use explicit git: or path: prefixes.`,
 		Args: validateDiffArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			log := cliLogger()
-			return runDiff(log, args, os.Stderr, os.Stdout)
+			if outputFormat == "json" {
+				return runDiffJSON(log, args, os.Stdout)
+			}
+			summaryOut, diffOut := diffOutputs(os.Stdout, os.Stderr)
+			return runDiff(log, args, summaryOut, diffOut)
 		},
 	}
+	diffCmd.Flags().StringVarP(&outputFormat, "output", "o", "yaml", "Output format (yaml or json)")
 	diffCmd.Flags().StringVar(&helmRelease, "hr", "", "Filter diff to a specific HelmRelease by name")
+	diffCmd.Flags().BoolVar(&diffSummary, "summary", false, "Print a human-readable change summary to stderr before the raw diff")
+	diffCmd.Flags().BoolVar(&diffSummaryOnly, "summary-only", false, "Print only the human-readable summary and suppress the raw diff")
 	testCmd := &cobra.Command{
 		Use:   "test <path>",
 		Short: "Validate all Kustomizations build and HelmReleases render",
@@ -126,9 +137,19 @@ inputs, use explicit git: or path: prefixes.`,
 			if err != nil {
 				return fmt.Errorf("error creating preview: %w", err)
 			}
+			if outputFormat == "json" {
+				result, err := p.TestJSON(args[0])
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				if encErr := enc.Encode(result); encErr != nil {
+					return encErr
+				}
+				return err
+			}
 			return p.Test(args[0], os.Stderr)
 		},
 	}
+	testCmd.Flags().StringVarP(&outputFormat, "output", "o", "yaml", "Output format (yaml or json)")
 
 	getCmd := &cobra.Command{
 		Use:   "get",
@@ -152,6 +173,11 @@ inputs, use explicit git: or path: prefixes.`,
 			if err != nil {
 				return err
 			}
+			if outputFormat == "json" {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(preview.KustomizationsToJSON(ks))
+			}
 			preview.PrintKustomizations(ks, os.Stdout)
 			return nil
 		},
@@ -174,10 +200,16 @@ inputs, use explicit git: or path: prefixes.`,
 			if err != nil {
 				return err
 			}
+			if outputFormat == "json" {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(preview.HelmReleasesToJSON(hrs))
+			}
 			preview.PrintHelmReleases(hrs, os.Stdout)
 			return nil
 		},
 	}
+	getCmd.PersistentFlags().StringVarP(&outputFormat, "output", "o", "yaml", "Output format (yaml or json)")
 	getCmd.AddCommand(getKSCmd, getHRCmd)
 
 	ciCmd := &cobra.Command{
@@ -265,6 +297,10 @@ Use --init to generate a complete .fmp.yaml config file in the repo.`,
 	rootCmd.AddCommand(renderCmd, diffCmd, testCmd, getCmd, ciCmd, detectCmd, versionCmd, githubActionCmd())
 
 	if err := rootCmd.Execute(); err != nil {
+		if outputFormat == "json" {
+			writeJSONError(os.Stdout, err)
+			os.Exit(1)
+		}
 		if errors.As(err, &expansionError) {
 			for _, w := range expansionError.Warnings {
 				fmt.Fprintf(os.Stderr, "WARNING: %v\n", w)
@@ -277,6 +313,33 @@ Use --init to generate a complete .fmp.yaml config file in the repo.`,
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// jsonErrorEnvelope is the structured error output used when --output json is set.
+type jsonErrorEnvelope struct {
+	Status string    `json:"status"`
+	Data   interface{} `json:"data"`
+	Error  jsonError `json:"error"`
+}
+
+type jsonError struct {
+	Reason  string                 `json:"reason"`
+	Message string                 `json:"message"`
+	Details map[string]interface{} `json:"details,omitempty"`
+}
+
+func writeJSONError(out io.Writer, err error) {
+	env := jsonErrorEnvelope{
+		Status: "failure",
+		Data:   nil,
+		Error: jsonError{
+			Reason:  "CommandFailed",
+			Message: err.Error(),
+		},
+	}
+	enc := json.NewEncoder(out)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(env)
 }
 
 func cliLogger() logr.Logger {
@@ -473,4 +536,14 @@ func parseLines(s string) []string {
 		}
 	}
 	return result
+}
+
+func diffOutputs(stdout, stderr io.Writer) (io.Writer, io.Writer) {
+	if diffSummaryOnly {
+		return stdout, io.Discard
+	}
+	if diffSummary {
+		return stderr, stdout
+	}
+	return io.Discard, stdout
 }

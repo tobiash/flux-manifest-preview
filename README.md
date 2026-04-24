@@ -105,6 +105,12 @@ fmp detect-permadiffs <path>  # Detect noisy fields and generate filters
 
 `fmp` auto-discovers configuration from `.fmp.yaml`, `.fmp.yml`, or `.github/fmp.yaml`.
 
+`fmp` configuration is not just for render settings. It can also define policy rules that:
+
+- classify diffs (`image_update`, `ingress_change`, etc.)
+- fail local diff or GitHub Action runs when specific rules match
+- suggest or apply GitHub pull request labels
+
 **Example `.fmp.yaml`:**
 
 ```yaml
@@ -151,6 +157,97 @@ policies:
 ```
 
 *Note: In `diff` mode, configuration is loaded from the current worktree so that local config changes take immediate effect.*
+
+### Policy Rules
+
+Policies run against a structured diff document containing summary counts and per-resource `old` / `new` objects.
+
+You can combine:
+
+- built-in policies shipped with `fmp`
+- file-based Rego modules via `policies.modules`
+- inline Rego modules via `policies.inline`
+
+Built-in policies currently include:
+
+- `image_update`: a workload container image changed
+- `secret_change`: a Secret was added, modified, or deleted
+- `ingress_change`: an `Ingress`, `Gateway`, or `HTTPRoute` changed
+- `crd_change`: a `CustomResourceDefinition` changed
+- `namespace_delete`: a `Namespace` was deleted
+- `stateful_workload_change`: a `StatefulSet` or `DaemonSet` changed
+- `pvc_change`: a `PersistentVolumeClaim` changed
+- `service_type_change`: a Service changed `spec.type`
+- `replicas_change`: a workload replica count changed
+
+`fail-on` matches policy IDs. If any listed rule matches, `fmp diff` exits non-zero and the GitHub Action fails.
+
+`labels` maps policy IDs to one or more pull request labels.
+
+**Minimal example:**
+
+```yaml
+policies:
+  builtin:
+    - image_update
+    - ingress_change
+  fail-on:
+    - forbid_latest
+  labels:
+    image_update: image-update
+    ingress_change:
+      - needs-network-review
+      - risky-change
+  inline:
+    - |
+      package fmp
+      import rego.v1
+
+      violations contains {
+        "id": "forbid_latest",
+        "message": sprintf("%s/%s uses :latest", [change.namespace, change.name]),
+        "severity": "error"
+      } if {
+        some change in input.changes
+        spec := object.get(change.new, "spec", {})
+        template := object.get(spec, "template", {})
+        podspec := object.get(template, "spec", {})
+        some c in object.get(podspec, "containers", [])
+        endswith(object.get(c, "image", ""), ":latest")
+      }
+```
+
+### Local Testing
+
+Use the plain CLI first.
+
+Raw diff only:
+
+```bash
+fmp diff main
+```
+
+Summary plus raw diff:
+
+```bash
+fmp diff --summary main
+```
+
+Summary only, no raw diff:
+
+```bash
+fmp diff --summary-only main
+```
+
+`--summary` prints the human-oriented summary to `stderr` and keeps the unified diff on `stdout`, which is safer for piping and scripting.
+
+Example local workflow:
+
+```bash
+fmp diff --summary main > /tmp/fmp.diff 2> /tmp/fmp.summary
+less /tmp/fmp.summary
+less /tmp/fmp.diff
+```
 
 ---
 
@@ -216,6 +313,10 @@ Use `fmp` in your CI/CD pipelines to review PRs automatically.
 | `comment-file` | Path to the comment markdown |
 | `report-file` | Path to the structured JSON report |
 | `export-dir` | Directory where manifests were exported |
+| `classifications-json` | JSON array of matched policy classifications |
+| `violations-json` | JSON array of matched policy violations |
+| `labels-json` | JSON array of suggested or applied PR labels |
+| `policy-failed` | Whether a configured `fail-on` policy matched |
 
 ### Examples
 
