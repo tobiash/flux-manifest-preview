@@ -240,7 +240,7 @@ policies:
 	if err == nil {
 		t.Fatal("expected policy failure")
 	}
-	if !strings.Contains(err.Error(), "policy enforcement failed: block_configmap") {
+	if !strings.Contains(err.Error(), "policy violation: block_configmap") {
 		t.Fatalf("expected policy failure error, got %v", err)
 	}
 	if !strings.Contains(summary.String(), "Violations:") || !strings.Contains(summary.String(), "block_configmap") {

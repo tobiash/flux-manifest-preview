@@ -297,9 +297,10 @@ Use --init to generate a complete .fmp.yaml config file in the repo.`,
 	rootCmd.AddCommand(renderCmd, diffCmd, testCmd, getCmd, ciCmd, detectCmd, versionCmd, githubActionCmd())
 
 	if err := rootCmd.Execute(); err != nil {
+		code := exitCodeFor(err)
 		if outputFormat == "json" {
 			writeJSONError(os.Stdout, err)
-			os.Exit(1)
+			os.Exit(code)
 		}
 		if errors.As(err, &expansionError) {
 			for _, w := range expansionError.Warnings {
@@ -308,11 +309,50 @@ Use --init to generate a complete .fmp.yaml config file in the repo.`,
 			for _, e := range expansionError.Errors {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", e)
 			}
-			os.Exit(1)
+			os.Exit(code)
 		}
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		os.Exit(code)
 	}
+}
+
+// Semantic exit codes for agent-friendly error handling.
+//   0 = success
+//   1 = differences found (diff only) or generic error
+//   2 = user input error (bad args, missing file, invalid config)
+//   3 = dependency failure (Helm chart missing, git error, network)
+//   5 = policy violation
+//   10 = unexpected internal error
+var (
+	ErrUserInput       = errors.New("user input error")
+	ErrDependency      = errors.New("dependency failure")
+	ErrPolicyViolation = errors.New("policy violation")
+)
+
+func userError(format string, args ...any) error {
+	return fmt.Errorf("%w: %s", ErrUserInput, fmt.Sprintf(format, args...))
+}
+
+func depError(format string, args ...any) error {
+	return fmt.Errorf("%w: %s", ErrDependency, fmt.Sprintf(format, args...))
+}
+
+func exitCodeFor(err error) int {
+	if errors.Is(err, ErrUserInput) {
+		return 2
+	}
+	if errors.Is(err, ErrDependency) {
+		return 3
+	}
+	if errors.Is(err, ErrPolicyViolation) {
+		return 5
+	}
+	// Expansion errors are treated as dependency failures if they contain
+	// render/Helm errors, otherwise generic.
+	if errors.As(err, &expansionError) {
+		return 3
+	}
+	return 1
 }
 
 // jsonErrorEnvelope is the structured error output used when --output json is set.

@@ -119,7 +119,7 @@ func runDiff(log logr.Logger, args []string, summaryOut io.Writer, diffOut io.Wr
 		return err
 	}
 	if policyResult.PolicyFailed {
-		return fmt.Errorf("policy enforcement failed: %s", strings.Join(policyResult.PolicyFailures, ", "))
+		return fmt.Errorf("%w: %s", ErrPolicyViolation, strings.Join(policyResult.PolicyFailures, ", "))
 	}
 	return nil
 }
@@ -202,7 +202,7 @@ func runDiffJSON(log logr.Logger, args []string, out io.Writer) error {
 	}
 
 	if policyResult.PolicyFailed {
-		return fmt.Errorf("policy enforcement failed: %s", strings.Join(policyResult.PolicyFailures, ", "))
+		return fmt.Errorf("%w: %s", ErrPolicyViolation, strings.Join(policyResult.PolicyFailures, ", "))
 	}
 	return nil
 }
