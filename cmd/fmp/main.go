@@ -292,9 +292,53 @@ Use --init to generate a complete .fmp.yaml config file in the repo.`,
 	}
 	detectCmd.Flags().BoolVar(&initConfig, "init", false, "Generate a .fmp.yaml config file in the repo root")
 
+	describeCmd := &cobra.Command{
+		Use:    "describe",
+		Short:  "Print JSON description of CLI and exit",
+		Hidden: true,
+		Run: func(cmd *cobra.Command, args []string) {
+			desc := struct {
+				Name        string           `json:"name"`
+				Description string           `json:"description"`
+				Version     string           `json:"version"`
+				Commands    []map[string]any `json:"commands"`
+			}{
+				Name:        rootCmd.Name(),
+				Description: rootCmd.Short,
+				Version:     version,
+			}
+			for _, c := range rootCmd.Commands() {
+				if c.Hidden {
+					continue
+				}
+				cmdDesc := map[string]any{
+					"name":        c.Name(),
+					"description": c.Short,
+				}
+				if len(c.Commands()) > 0 {
+					subcommands := []map[string]any{}
+					for _, sc := range c.Commands() {
+						if sc.Hidden {
+							continue
+						}
+						subcommands = append(subcommands, map[string]any{
+							"name":        sc.Name(),
+							"description": sc.Short,
+						})
+					}
+					cmdDesc["commands"] = subcommands
+				}
+				desc.Commands = append(desc.Commands, cmdDesc)
+			}
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			_ = enc.Encode(desc)
+		},
+	}
+
 	rootCmd.SilenceErrors = true
 	rootCmd.SilenceUsage = true
-	rootCmd.AddCommand(renderCmd, diffCmd, testCmd, getCmd, ciCmd, detectCmd, versionCmd, githubActionCmd())
+	rootCmd.AddCommand(renderCmd, diffCmd, testCmd, getCmd, ciCmd, detectCmd, versionCmd, githubActionCmd(), describeCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		code := exitCodeFor(err)
