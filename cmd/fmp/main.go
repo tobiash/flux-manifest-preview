@@ -18,8 +18,6 @@ import (
 	"github.com/tobiash/flux-manifest-preview/pkg/preview"
 )
 
-var expansionError *preview.ExpansionError
-
 var (
 	kustomizations  []string
 	recursive       bool
@@ -346,11 +344,12 @@ Use --init to generate a complete .fmp.yaml config file in the repo.`,
 			writeJSONError(os.Stdout, err)
 			os.Exit(code)
 		}
-		if errors.As(err, &expansionError) {
-			for _, w := range expansionError.Warnings {
+		var expErr *preview.ExpansionError
+		if errors.As(err, &expErr) {
+			for _, w := range expErr.Warnings {
 				fmt.Fprintf(os.Stderr, "WARNING: %v\n", w)
 			}
-			for _, e := range expansionError.Errors {
+			for _, e := range expErr.Errors {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", e)
 			}
 			os.Exit(code)
@@ -394,7 +393,8 @@ func exitCodeFor(err error) int {
 	}
 	// Expansion errors are treated as dependency failures if they contain
 	// render/Helm errors, otherwise generic.
-	if errors.As(err, &expansionError) {
+	var expErr *preview.ExpansionError
+	if errors.As(err, &expErr) {
 		return 3
 	}
 	return 1

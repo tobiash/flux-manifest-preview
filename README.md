@@ -101,6 +101,50 @@ fmp detect-permadiffs <path>  # Detect noisy fields and generate filters
 
 ---
 
+## 🤖 Agent-Friendly Features
+
+`fmp` is designed for programmatic consumption by automation and AI agents.
+
+### Structured Output (`--output json`)
+
+All commands that produce YAML or reports support `--output json`:
+
+```bash
+fmp diff --output json
+fmp render --output json <path>
+fmp test --output json <path>
+fmp get ks --output json <path>
+fmp get hr --output json <path>
+```
+
+JSON output follows Kubernetes API conventions:
+- Lists are wrapped in a `v1/List` envelope with `apiVersion`, `kind`, and `items`
+- Resource references use `ObjectRef` (`apiVersion`, `kind`, `name`, `namespace`)
+- Error responses use a structured envelope: `{"status": "failure", "error": {"reason": "...", "message": "..."}}`
+
+### Semantic Exit Codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Success (no differences for `diff`) |
+| 1 | Differences found (`diff` only) or generic error |
+| 2 | User input error (bad args, missing file, invalid config) |
+| 3 | Dependency failure (Helm chart missing, git error, network) |
+| 5 | Policy violation |
+| 10 | Unexpected internal error |
+
+### Programmatic Discovery (`describe`)
+
+The hidden `describe` command emits a JSON description of the CLI for agent consumption:
+
+```bash
+fmp describe
+```
+
+This includes all commands, flags, descriptions, and subcommand metadata.
+
+---
+
 ## ⚙️ Configuration
 
 `fmp` auto-discovers configuration from `.fmp.yaml`, `.fmp.yml`, or `.github/fmp.yaml`.
