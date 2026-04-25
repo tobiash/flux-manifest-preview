@@ -1,8 +1,12 @@
 package diff
 
 import (
+	"fmt"
 	"io"
 
+	"github.com/hexops/gotextdiff"
+	"github.com/hexops/gotextdiff/myers"
+	"github.com/hexops/gotextdiff/span"
 	k8qdiff "github.com/tobiash/k8q/pkg/diff"
 	"github.com/tobiash/flux-manifest-preview/pkg/render"
 	"sigs.k8s.io/kustomize/kyaml/resid"
@@ -54,6 +58,15 @@ func gvkVersion(apiVersion string) string {
 	return apiVersion
 }
 
+func computeDiff(name, before, after string) gotextdiff.Unified {
+	edits := myers.ComputeEdits(span.URIFromPath(name), before, after)
+	return gotextdiff.ToUnified(name, name, before, edits)
+}
+
+func formatUnified(w io.Writer, u gotextdiff.Unified) {
+	fmt.Fprintf(w, "%v", u)
+}
+
 // Diff computes a unified diff between two Renders and writes the result to w.
 func Diff(a, b *render.Render, w io.Writer) error {
 	result, err := k8qdiff.DiffNodes(renderToRNodes(a), renderToRNodes(b))
@@ -68,8 +81,7 @@ func Diff(a, b *render.Render, w io.Writer) error {
 			continue
 		}
 		yaml := r.MustYaml()
-		u := k8qdiff.ComputeDiff(id.String(), yaml, "")
-		k8qdiff.Format(w, u)
+		formatUnified(w, computeDiff(id.String(), yaml, ""))
 	}
 
 	for _, key := range result.Added {
@@ -79,13 +91,11 @@ func Diff(a, b *render.Render, w io.Writer) error {
 			continue
 		}
 		yaml := r.MustYaml()
-		u := k8qdiff.ComputeDiff(id.String(), "", yaml)
-		k8qdiff.Format(w, u)
+		formatUnified(w, computeDiff(id.String(), "", yaml))
 	}
 
 	for _, change := range result.Modified {
-		u := k8qdiff.ComputeDiff(change.Key.String(), change.Before, change.After)
-		k8qdiff.Format(w, u)
+		formatUnified(w, computeDiff(change.Key.String(), change.Before, change.After))
 	}
 
 	return nil

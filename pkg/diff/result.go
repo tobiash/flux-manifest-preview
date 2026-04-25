@@ -3,6 +3,7 @@ package diff
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 
 	k8qdiff "github.com/tobiash/k8q/pkg/diff"
@@ -91,8 +92,8 @@ func (r *DiffResult) ToJSON() *DiffResultJSON {
 		var diffBuf bytes.Buffer
 		oldYaml := mustYamlMap(c.Old)
 		newYaml := mustYamlMap(c.New)
-		u := k8qdiff.ComputeDiff(c.ID.String(), oldYaml, newYaml)
-		k8qdiff.Format(&diffBuf, u)
+		u := computeDiff(c.ID.String(), oldYaml, newYaml)
+		fmt.Fprintf(&diffBuf, "%v", u)
 		out.Modified = append(out.Modified, DiffChangeJSON{
 			ObjectRef: ObjectRef{
 				APIVersion: gvkAPIVersion(c.ID.Gvk.Group, c.ID.Gvk.Version),
@@ -154,8 +155,8 @@ func DiffWithResult(a, b *render.Render, w io.Writer) (*DiffResult, error) {
 			Action:    "added",
 			New:       obj,
 		})
-		u := k8qdiff.ComputeDiff(id.String(), "", yaml)
-		k8qdiff.Format(w, u)
+		u := computeDiff(id.String(), "", yaml)
+		fmt.Fprintf(w, "%v", u)
 	}
 
 	for _, key := range result.Removed {
@@ -175,8 +176,8 @@ func DiffWithResult(a, b *render.Render, w io.Writer) (*DiffResult, error) {
 			Action:    "deleted",
 			Old:       obj,
 		})
-		u := k8qdiff.ComputeDiff(id.String(), yaml, "")
-		k8qdiff.Format(w, u)
+		u := computeDiff(id.String(), yaml, "")
+		fmt.Fprintf(w, "%v", u)
 	}
 
 	for _, change := range result.Modified {
@@ -204,8 +205,8 @@ func DiffWithResult(a, b *render.Render, w io.Writer) (*DiffResult, error) {
 			Old:       mapOrNil(ar),
 			New:       mapOrNil(br),
 		})
-		u := k8qdiff.ComputeDiff(id.String(), aYaml, bYaml)
-		k8qdiff.Format(w, u)
+		u := computeDiff(id.String(), aYaml, bYaml)
+		fmt.Fprintf(w, "%v", u)
 	}
 
 	return fmpResult, nil
