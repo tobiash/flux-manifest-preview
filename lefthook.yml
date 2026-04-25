@@ -1,0 +1,27 @@
+# Lefthook configuration for flux-manifest-preview
+# Install hooks with: lefthook install
+
+pre-commit:
+  parallel: true
+  commands:
+    gofmt:
+      glob: "*.go"
+      run: gofmt -w {staged_files}
+      stage_fixed: true
+    govet:
+      glob: "*.go"
+      run: go vet ./...
+    go-mod-tidy:
+      glob: "*.{go,mod}"
+      run: go mod tidy && git diff --exit-code go.mod go.sum
+    golangci-lint:
+      glob: "*.go"
+      run: golangci-lint run --new-from-rev HEAD --fix ./...
+      stage_fixed: true
+
+pre-push:
+  commands:
+    test:
+      run: go test ./...
+    lint:
+      run: golangci-lint run ./...
