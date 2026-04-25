@@ -24,7 +24,6 @@ type Render struct {
 }
 
 // NewDefaultRender creates a Render with default kustomize options.
-
 func NewDefaultRender(log logr.Logger) *Render {
 	return &Render{
 		ResMap:     resmap.New(),

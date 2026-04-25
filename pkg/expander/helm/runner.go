@@ -123,14 +123,14 @@ func (r *Runner) renderChart(ctx context.Context, t *RenderTask) (resmap.ResMap,
 
 	var (
 		chartRef string
-		chart    *chart.Chart
+		ch       *chart.Chart
 	)
 	if t.localChartPath != "" {
 		loaded, err := loader.Load(t.localChartPath)
 		if err != nil {
 			return nil, fmt.Errorf("loading local chart %s: %w", t.localChartPath, err)
 		}
-		chart = loaded
+		ch = loaded
 		r.logger.V(1).Info("loaded local chart", "chart", t.chart, "path", t.localChartPath)
 	} else if t.isOCI {
 		// For OCI charts, construct the full reference, skip repo index, and set up a registry client.
@@ -153,7 +153,7 @@ func (r *Runner) renderChart(ctx context.Context, t *RenderTask) (resmap.ResMap,
 		install.KeyFile = t.repo.KeyFile
 		chartRef = t.chart
 	}
-	if chart == nil {
+	if ch == nil {
 		cp, err := install.LocateChart(chartRef, r.settings)
 		if err != nil {
 			return nil, fmt.Errorf("error locating chart: %w", err)
@@ -163,9 +163,9 @@ func (r *Runner) renderChart(ctx context.Context, t *RenderTask) (resmap.ResMap,
 		if err != nil {
 			return nil, err
 		}
-		chart = loaded
+		ch = loaded
 	}
-	rel, err := install.RunWithContext(ctx, chart, t.values)
+	rel, err := install.RunWithContext(ctx, ch, t.values)
 	if err != nil {
 		return nil, err
 	}

@@ -158,7 +158,7 @@ func executeAction(log logr.Logger, req *githubaction.Request) (*githubaction.Ac
 	left := req.DiffLeft()
 	right := req.DiffRight()
 
-	result, err := p.DiffResult(left, right, &diffText)
+	result, err := p.DiffResult(context.Background(), left, right, &diffText)
 	if err != nil {
 		// Try to produce a partial report even on error
 		report := &githubaction.ActionReport{

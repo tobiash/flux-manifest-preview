@@ -1,6 +1,7 @@
 package preview
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"text/tabwriter"
@@ -35,7 +36,7 @@ type HelmReleaseItem struct {
 
 // GetResourcesOutput is the JSON envelope for listing Flux resources.
 type GetResourcesOutput struct {
-	Items interface{} `json:"items"`
+	Items any `json:"items"`
 }
 
 // KustomizationInfo holds extracted fields from a Flux Kustomization CR.
@@ -58,8 +59,8 @@ type HelmReleaseInfo struct {
 }
 
 // ListKustomizations discovers and lists Flux Kustomizations from the repo at path.
-func (p *Preview) ListKustomizations(path string) ([]KustomizationInfo, error) {
-	r, err := p.loadRepo(path)
+func (p *Preview) ListKustomizations(ctx context.Context, path string) ([]KustomizationInfo, error) {
+	r, err := p.loadRepo(ctx, path)
 	if err != nil {
 		return nil, err
 	}
@@ -67,8 +68,8 @@ func (p *Preview) ListKustomizations(path string) ([]KustomizationInfo, error) {
 }
 
 // ListHelmReleases discovers and lists HelmReleases from the repo at path.
-func (p *Preview) ListHelmReleases(path string) ([]HelmReleaseInfo, error) {
-	r, err := p.loadRepo(path)
+func (p *Preview) ListHelmReleases(ctx context.Context, path string) ([]HelmReleaseInfo, error) {
+	r, err := p.loadRepo(ctx, path)
 	if err != nil {
 		return nil, err
 	}

@@ -64,7 +64,7 @@ func computeDiff(name, before, after string) gotextdiff.Unified {
 }
 
 func formatUnified(w io.Writer, u gotextdiff.Unified) {
-	fmt.Fprintf(w, "%v", u)
+	_, _ = fmt.Fprintf(w, "%v", u)
 }
 
 // Diff computes a unified diff between two Renders and writes the result to w.

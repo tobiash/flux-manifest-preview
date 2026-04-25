@@ -2,6 +2,7 @@ package preview
 
 import (
 	"bytes"
+	"context"
 	"path/filepath"
 	"testing"
 
@@ -20,11 +21,11 @@ func TestTest_Success(t *testing.T) {
 
 	testdata := filepath.Join("testdata")
 	var buf bytes.Buffer
-	if err := p.Test(testdata, &buf); err != nil {
+	if err := p.Test(context.Background(), testdata, &buf); err != nil {
 		t.Fatalf("Test() error = %v, output: %s", err, buf.String())
 	}
 	if buf.String() != "PASS\n" {
-		t.Errorf("expected 'PASS\\n', got %q", buf.String())
+		t.Errorf("expected 'PASS\n', got %q", buf.String())
 	}
 }
 
@@ -40,7 +41,7 @@ func TestTest_Failure(t *testing.T) {
 
 	testdata := filepath.Join("testdata")
 	var buf bytes.Buffer
-	if err := p.Test(testdata, &buf); err == nil {
+	if err := p.Test(context.Background(), testdata, &buf); err == nil {
 		t.Fatal("expected error from Test() with broken kustomization")
 	}
 	if !bytes.Contains(buf.Bytes(), []byte("FAIL:")) {

@@ -81,7 +81,7 @@ func (r *DiffResult) ToJSON() *DiffResultJSON {
 	}
 	for _, c := range r.Deleted {
 		out.Deleted = append(out.Deleted, ObjectRef{
-			APIVersion: gvkAPIVersion(c.ID.Gvk.Group, c.ID.Gvk.Version),
+			APIVersion: gvkAPIVersion(c.ID.Group, c.ID.Version),
 			Kind:       c.Kind,
 			Name:       c.Name,
 			Namespace:  c.Namespace,
@@ -95,7 +95,7 @@ func (r *DiffResult) ToJSON() *DiffResultJSON {
 		formatUnified(&diffBuf, u)
 		out.Modified = append(out.Modified, DiffChangeJSON{
 			ObjectRef: ObjectRef{
-				APIVersion: gvkAPIVersion(c.ID.Gvk.Group, c.ID.Gvk.Version),
+				APIVersion: gvkAPIVersion(c.ID.Group, c.ID.Version),
 				Kind:       c.Kind,
 				Name:       c.Name,
 				Namespace:  c.Namespace,
@@ -109,6 +109,8 @@ func (r *DiffResult) ToJSON() *DiffResultJSON {
 	return out
 }
 
+// gvkAPIVersion returns an apiVersion string from a group and version.
+// If group is empty, it returns the version alone (for core resources).
 func gvkAPIVersion(group, version string) string {
 	if group == "" {
 		return version

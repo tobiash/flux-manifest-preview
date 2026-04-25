@@ -90,7 +90,7 @@ func runDiff(log logr.Logger, args []string, summaryOut io.Writer, diffOut io.Wr
 	}
 
 	var diffText bytes.Buffer
-	result, err := p.DiffResult(leftPath, rightPath, &diffText)
+	result, err := p.DiffResult(context.Background(), leftPath, rightPath, &diffText)
 	if err != nil {
 		return err
 	}
@@ -165,7 +165,7 @@ func runDiffJSON(log logr.Logger, args []string, out io.Writer) error {
 	}
 
 	var diffText bytes.Buffer
-	result, err := p.DiffResult(leftPath, rightPath, &diffText)
+	result, err := p.DiffResult(context.Background(), leftPath, rightPath, &diffText)
 	if err != nil {
 		return err
 	}
@@ -188,7 +188,7 @@ func runDiffJSON(log logr.Logger, args []string, out io.Writer) error {
 	}
 
 	jsonResult := result.ToJSON()
-	output := map[string]interface{}{
+	output := map[string]any{
 		"added":    jsonResult.Added,
 		"deleted":  jsonResult.Deleted,
 		"modified": jsonResult.Modified,

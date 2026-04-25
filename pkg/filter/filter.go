@@ -21,13 +21,11 @@ var Filters = map[string]func() kio.Filter{
 }
 
 // KFilter wraps a kio.Filter for YAML marshaling and unmarshaling.
-
 type KFilter struct {
 	kio.Filter
 }
 
 // FilterConfig defines a pipeline of KIO filters to apply.
-
 type FilterConfig struct {
 	Kind    string    `yaml:"kind,omitempty"`
 	Filters []KFilter `yaml:"filters,omitempty"`

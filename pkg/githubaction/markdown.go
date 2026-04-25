@@ -259,19 +259,3 @@ func summarizeClassifications(items []policy.Classification) []summarizedClassif
 	})
 	return rows
 }
-
-func sortedMap(m map[string]int) [][2]string {
-	var out [][2]string
-	for k, v := range m {
-		out = append(out, [2]string{k, fmt.Sprintf("%d", v)})
-	}
-	// Simple sort by key for stability
-	for i := 0; i < len(out); i++ {
-		for j := i + 1; j < len(out); j++ {
-			if out[i][0] > out[j][0] {
-				out[i], out[j] = out[j], out[i]
-			}
-		}
-	}
-	return out
-}

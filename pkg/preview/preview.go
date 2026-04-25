@@ -36,7 +36,6 @@ type Preview struct {
 	gitRepoExpander *gitrepoexpander.Expander
 	helmSettings    *helmcli.EnvSettings
 	log             logr.Logger
-	ctx             context.Context
 }
 
 // ExpansionError is returned when one or more non-fatal errors were
@@ -63,7 +62,7 @@ type loadRepoResult struct {
 	warnings []error
 }
 
-func (p *Preview) loadRepo(path string) (*loadRepoResult, error) {
+func (p *Preview) loadRepo(ctx context.Context, path string) (*loadRepoResult, error) {
 	log := p.log.WithValues("renderPath", path)
 	r := render.NewDefaultRender(log)
 	fSys := filesys.MakeFsOnDisk()
@@ -136,7 +135,7 @@ func (p *Preview) loadRepo(path string) (*loadRepoResult, error) {
 		// Run expanders to discover new paths and expand resources.
 		queue = nil
 		if activeExpanders != nil {
-			result, err := activeExpanders.Expand(p.ctx, r)
+			result, err := activeExpanders.Expand(ctx, r)
 			if err != nil {
 				return nil, fmt.Errorf("failed to expand: %w", err)
 			}
@@ -179,8 +178,8 @@ func (p *Preview) loadRepo(path string) (*loadRepoResult, error) {
 }
 
 // Render renders the resources at path and writes the YAML output.
-func (p *Preview) Render(path string, out io.Writer) error {
-	result, err := p.loadRepo(path)
+func (p *Preview) Render(ctx context.Context, path string, out io.Writer) error {
+	result, err := p.loadRepo(ctx, path)
 	if err != nil {
 		return fmt.Errorf("error loading repo: %w", err)
 	}
@@ -199,8 +198,8 @@ func (p *Preview) Render(path string, out io.Writer) error {
 }
 
 // RenderJSON renders the resources at path and writes JSON output.
-func (p *Preview) RenderJSON(path string, out io.Writer) error {
-	result, err := p.loadRepo(path)
+func (p *Preview) RenderJSON(ctx context.Context, path string, out io.Writer) error {
+	result, err := p.loadRepo(ctx, path)
 	if err != nil {
 		return fmt.Errorf("error loading repo: %w", err)
 	}
@@ -232,8 +231,8 @@ type TestIssue struct {
 
 // Test validates that all Kustomizations build and HelmReleases render.
 // Returns nil on success, or an error describing the failure.
-func (p *Preview) Test(path string, out io.Writer) error {
-	result, err := p.loadRepo(path)
+func (p *Preview) Test(ctx context.Context, path string, out io.Writer) error {
+	result, err := p.loadRepo(ctx, path)
 	if err != nil {
 		_, _ = fmt.Fprintf(out, "FAIL: %v\n", err)
 		return err
@@ -250,8 +249,8 @@ func (p *Preview) Test(path string, out io.Writer) error {
 }
 
 // TestJSON validates resources and returns a structured test result.
-func (p *Preview) TestJSON(path string) (*TestResult, error) {
-	result, err := p.loadRepo(path)
+func (p *Preview) TestJSON(ctx context.Context, path string) (*TestResult, error) {
+	result, err := p.loadRepo(ctx, path)
 	if err != nil {
 		return &TestResult{
 			Status: "fail",
@@ -270,17 +269,17 @@ func (p *Preview) TestJSON(path string) (*TestResult, error) {
 
 // Diff computes and writes the diff between two repository paths.
 // If a HelmRelease filter is set, only resources from that release are included.
-func (p *Preview) Diff(a, b string, out io.Writer) error {
-	g, _ := errgroup.WithContext(p.ctx)
+func (p *Preview) Diff(ctx context.Context, a, b string, out io.Writer) error {
+	g, _ := errgroup.WithContext(ctx)
 	var ar, br *loadRepoResult
 	g.Go(func() error {
 		var err error
-		ar, err = p.freshLoadRepo(a)
+		ar, err = p.freshLoadRepo(ctx, a)
 		return err
 	})
 	g.Go(func() error {
 		var err error
-		br, err = p.freshLoadRepo(b)
+		br, err = p.freshLoadRepo(ctx, b)
 		return err
 	})
 	if err := g.Wait(); err != nil {
@@ -314,17 +313,17 @@ func (p *Preview) Diff(a, b string, out io.Writer) error {
 
 // DiffResult computes and writes the diff between two repository paths,
 // returning structured change metadata alongside the rendered diff text.
-func (p *Preview) DiffResult(a, b string, out io.Writer) (*diff.DiffResult, error) {
-	g, _ := errgroup.WithContext(p.ctx)
+func (p *Preview) DiffResult(ctx context.Context, a, b string, out io.Writer) (*diff.DiffResult, error) {
+	g, _ := errgroup.WithContext(ctx)
 	var ar, br *loadRepoResult
 	g.Go(func() error {
 		var err error
-		ar, err = p.freshLoadRepo(a)
+		ar, err = p.freshLoadRepo(ctx, a)
 		return err
 	})
 	g.Go(func() error {
 		var err error
-		br, err = p.freshLoadRepo(b)
+		br, err = p.freshLoadRepo(ctx, b)
 		return err
 	})
 	if err := g.Wait(); err != nil {
@@ -355,9 +354,6 @@ func New(opts ...Opt) (*Preview, error) {
 		if err := opt(&p); err != nil {
 			return nil, err
 		}
-	}
-	if p.ctx == nil {
-		p.ctx = context.Background()
 	}
 	return &p, nil
 }
@@ -404,9 +400,9 @@ func WithFilterConfig(fc *filter.FilterConfig) Opt {
 }
 
 // WithHelm registers the Helm expander with the given settings.
-func WithHelm(helmsettings *helmcli.EnvSettings) Opt {
+func WithHelm(helmnsettings *helmcli.EnvSettings) Opt {
 	return func(p *Preview) error {
-		p.helmSettings = helmsettings
+		p.helmSettings = helmnsettings
 		return nil
 	}
 }
@@ -467,14 +463,6 @@ func WithPaths(paths []string, recursive bool) Opt {
 	}
 }
 
-// WithContext sets the context for the Preview.
-func WithContext(ctx context.Context) Opt {
-	return func(p *Preview) error {
-		p.ctx = ctx
-		return nil
-	}
-}
-
 // applyOutputOptions applies sort and CRD filtering to the render result.
 func (p *Preview) applyOutputOptions(r *render.Render) {
 	if p.sortOutput {
@@ -523,13 +511,13 @@ func WithSOPSDecrypt() Opt {
 // to find non-deterministic output. It generates a filter config that
 // can be used to normalize these fields in subsequent diff/render runs.
 // Each render pass uses a fresh set of expanders to avoid cached state.
-func (p *Preview) DetectPermadiffs(path string, out io.Writer) error {
-	ar, err := p.freshLoadRepo(path)
+func (p *Preview) DetectPermadiffs(ctx context.Context, path string, out io.Writer) error {
+	ar, err := p.freshLoadRepo(ctx, path)
 	if err != nil {
 		return fmt.Errorf("error loading repo (first pass): %w", err)
 	}
 
-	br, err := p.freshLoadRepo(path)
+	br, err := p.freshLoadRepo(ctx, path)
 	if err != nil {
 		return fmt.Errorf("error loading repo (second pass): %w", err)
 	}
@@ -539,13 +527,13 @@ func (p *Preview) DetectPermadiffs(path string, out io.Writer) error {
 
 // GenerateInitConfig renders the repo twice to detect permadiffs and
 // writes a complete .fmp.yaml config file to destPath.
-func (p *Preview) GenerateInitConfig(path, destPath string) error {
-	ar, err := p.freshLoadRepo(path)
+func (p *Preview) GenerateInitConfig(ctx context.Context, path, destPath string) error {
+	ar, err := p.freshLoadRepo(ctx, path)
 	if err != nil {
 		return fmt.Errorf("error loading repo (first pass): %w", err)
 	}
 
-	br, err := p.freshLoadRepo(path)
+	br, err := p.freshLoadRepo(ctx, path)
 	if err != nil {
 		return fmt.Errorf("error loading repo (second pass): %w", err)
 	}
@@ -606,7 +594,7 @@ func (p *Preview) GenerateInitConfig(path, destPath string) error {
 // but new expanders, then loads the repo. This is needed for permadiff
 // detection where we need independent render passes that don't share
 // cached expander state (e.g. the Helm expander's expanded-release map).
-func (p *Preview) freshLoadRepo(path string) (*loadRepoResult, error) {
+func (p *Preview) freshLoadRepo(ctx context.Context, path string) (*loadRepoResult, error) {
 	fresh := &Preview{
 		paths:           p.paths,
 		recursive:       p.recursive,
@@ -616,12 +604,11 @@ func (p *Preview) freshLoadRepo(path string) (*loadRepoResult, error) {
 		filters:         p.filters,
 		fluxKSEnabled:   p.fluxKSEnabled,
 		log:             p.log,
-		ctx:             p.ctx,
 		gitRepoExpander: p.gitRepoExpander,
 		helmSettings:    p.helmSettings,
 	}
 
-	return fresh.loadRepo(path)
+	return fresh.loadRepo(ctx, path)
 }
 
 func boolPtr(b bool) *bool {

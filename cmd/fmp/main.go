@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -85,9 +86,9 @@ func main() {
 				return fmt.Errorf("error creating preview: %w", err)
 			}
 			if outputFormat == "json" {
-				return p.RenderJSON(args[0], os.Stdout)
+				return p.RenderJSON(context.Background(), args[0], os.Stdout)
 			}
-			return p.Render(args[0], os.Stdout)
+			return p.Render(context.Background(), args[0], os.Stdout)
 		},
 	}
 
@@ -136,7 +137,7 @@ inputs, use explicit git: or path: prefixes.`,
 				return fmt.Errorf("error creating preview: %w", err)
 			}
 			if outputFormat == "json" {
-				result, err := p.TestJSON(args[0])
+				result, err := p.TestJSON(context.Background(), args[0])
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
 				if encErr := enc.Encode(result); encErr != nil {
@@ -144,7 +145,7 @@ inputs, use explicit git: or path: prefixes.`,
 				}
 				return err
 			}
-			return p.Test(args[0], os.Stderr)
+			return p.Test(context.Background(), args[0], os.Stderr)
 		},
 	}
 	testCmd.Flags().StringVarP(&outputFormat, "output", "o", "yaml", "Output format (yaml or json)")
@@ -167,7 +168,7 @@ inputs, use explicit git: or path: prefixes.`,
 			if err != nil {
 				return fmt.Errorf("error creating preview: %w", err)
 			}
-			ks, err := p.ListKustomizations(args[0])
+			ks, err := p.ListKustomizations(context.Background(), args[0])
 			if err != nil {
 				return err
 			}
@@ -194,7 +195,7 @@ inputs, use explicit git: or path: prefixes.`,
 			if err != nil {
 				return fmt.Errorf("error creating preview: %w", err)
 			}
-			hrs, err := p.ListHelmReleases(args[0])
+			hrs, err := p.ListHelmReleases(context.Background(), args[0])
 			if err != nil {
 				return err
 			}
@@ -222,7 +223,7 @@ CLI flags and FMP_* env vars override the config file.`,
 			repoA := os.Getenv("FMP_REPO_A")
 			repoB := os.Getenv("FMP_REPO_B")
 			if repoA == "" || repoB == "" {
-				return fmt.Errorf("must set both FMP_REPO_A and FMP_REPO_B")
+				return fmt.Errorf("must set both FMP_REPO_A and FMP_REPO_B environment variables")
 			}
 
 			if ks := os.Getenv("FMP_KUSTOMIZATIONS"); ks != "" {
@@ -251,7 +252,7 @@ CLI flags and FMP_* env vars override the config file.`,
 			if err != nil {
 				return fmt.Errorf("error creating preview: %w", err)
 			}
-			return p.Diff(repoA, repoB, os.Stdout)
+			return p.Diff(context.Background(), repoA, repoB, os.Stdout)
 		},
 	}
 	versionCmd := &cobra.Command{
@@ -285,7 +286,7 @@ Use --init to generate a complete .fmp.yaml config file in the repo.`,
 			if err != nil {
 				return fmt.Errorf("error creating preview: %w", err)
 			}
-			return p.DetectPermadiffs(args[0], os.Stdout)
+			return p.DetectPermadiffs(context.Background(), args[0], os.Stdout)
 		},
 	}
 	detectCmd.Flags().BoolVar(&initConfig, "init", false, "Generate a .fmp.yaml config file in the repo root")
@@ -373,14 +374,6 @@ var (
 	ErrPolicyViolation = errors.New("policy violation")
 )
 
-func userError(format string, args ...any) error {
-	return fmt.Errorf("%w: %s", ErrUserInput, fmt.Sprintf(format, args...))
-}
-
-func depError(format string, args ...any) error {
-	return fmt.Errorf("%w: %s", ErrDependency, fmt.Sprintf(format, args...))
-}
-
 func exitCodeFor(err error) int {
 	if errors.Is(err, ErrUserInput) {
 		return 2
@@ -402,15 +395,15 @@ func exitCodeFor(err error) int {
 
 // jsonErrorEnvelope is the structured error output used when --output json is set.
 type jsonErrorEnvelope struct {
-	Status string      `json:"status"`
-	Data   interface{} `json:"data"`
-	Error  jsonError   `json:"error"`
+	Status string    `json:"status"`
+	Data   any       `json:"data"`
+	Error  jsonError `json:"error"`
 }
 
 type jsonError struct {
-	Reason  string                 `json:"reason"`
-	Message string                 `json:"message"`
-	Details map[string]interface{} `json:"details,omitempty"`
+	Reason  string         `json:"reason"`
+	Message string         `json:"message"`
+	Details map[string]any `json:"details,omitempty"`
 }
 
 func writeJSONError(out io.Writer, err error) {
@@ -590,7 +583,7 @@ func generateInitConfig(repoPath string) error {
 		return fmt.Errorf("error creating preview: %w", err)
 	}
 
-	if err := p.GenerateInitConfig(repoPath, dest); err != nil {
+	if err := p.GenerateInitConfig(context.Background(), repoPath, dest); err != nil {
 		return err
 	}
 

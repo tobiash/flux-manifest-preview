@@ -1,6 +1,7 @@
 package preview
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,7 +54,7 @@ spec:
 		defer p.gitRepoExpander.Cleanup()
 	}
 
-	result, err := p.freshLoadRepo(mainRepo)
+	result, err := p.freshLoadRepo(context.Background(), mainRepo)
 	if err != nil {
 		t.Fatalf("freshLoadRepo() error = %v", err)
 	}
