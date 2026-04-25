@@ -1,6 +1,6 @@
 module github.com/tobiash/flux-manifest-preview
 
-go 1.26.1
+go 1.26.2
 
 require (
 	github.com/fluxcd/helm-controller/api v1.5.3
@@ -11,6 +11,7 @@ require (
 	github.com/fluxcd/source-controller/api v1.8.1
 	github.com/go-logr/logr v1.4.3
 	github.com/go-logr/zerologr v1.2.3
+	github.com/hexops/gotextdiff v1.0.3
 	github.com/open-policy-agent/opa v1.15.2
 	github.com/rs/zerolog v1.33.0
 	github.com/sethvargo/go-githubactions v1.3.2
@@ -91,7 +92,6 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gosuri/uitable v0.0.4 // indirect
 	github.com/gregjones/httpcache v0.0.0-20190611155906-901d90724c79 // indirect
-	github.com/hexops/gotextdiff v1.0.3 // indirect
 	github.com/huandu/xstrings v1.5.0 // indirect
 	github.com/ianlancetaylor/demangle v0.0.0-20240805132620-81f5be970eca // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
