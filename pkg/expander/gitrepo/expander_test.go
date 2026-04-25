@@ -268,7 +268,14 @@ func newRenderFromYAML(t *testing.T, yaml string) *render.Render {
 func gitRun(t *testing.T, repo string, args ...string) {
 	t.Helper()
 	cmdArgs := append([]string{"-C", repo}, args...)
-	if out, err := exec.Command("git", cmdArgs...).CombinedOutput(); err != nil {
+	cmd := exec.Command("git", cmdArgs...)
+	cmd.Env = os.Environ()
+	for i := len(cmd.Env) - 1; i >= 0; i-- {
+		if strings.HasPrefix(cmd.Env[i], "GIT_DIR=") || strings.HasPrefix(cmd.Env[i], "GIT_WORK_TREE=") || strings.HasPrefix(cmd.Env[i], "GIT_INDEX_FILE=") {
+			cmd.Env = append(cmd.Env[:i], cmd.Env[i+1:]...)
+		}
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v failed: %v\n%s", args, err, string(out))
 	}
 }

@@ -271,6 +271,12 @@ func commitFile(t *testing.T, repo, name, content, message string) {
 func gitCommit(t *testing.T, repo, message string) {
 	t.Helper()
 	cmd := exec.Command("git", "-C", repo, "-c", "user.name=Test User", "-c", "user.email=test@example.com", "commit", "-m", message)
+	cmd.Env = os.Environ()
+	for i := len(cmd.Env) - 1; i >= 0; i-- {
+		if strings.HasPrefix(cmd.Env[i], "GIT_DIR=") || strings.HasPrefix(cmd.Env[i], "GIT_WORK_TREE=") || strings.HasPrefix(cmd.Env[i], "GIT_INDEX_FILE=") {
+			cmd.Env = append(cmd.Env[:i], cmd.Env[i+1:]...)
+		}
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git commit %q failed: %v\n%s", message, err, string(out))
@@ -280,6 +286,12 @@ func gitCommit(t *testing.T, repo, message string) {
 func gitRun(t *testing.T, repo string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+	cmd.Env = os.Environ()
+	for i := len(cmd.Env) - 1; i >= 0; i-- {
+		if strings.HasPrefix(cmd.Env[i], "GIT_DIR=") || strings.HasPrefix(cmd.Env[i], "GIT_WORK_TREE=") || strings.HasPrefix(cmd.Env[i], "GIT_INDEX_FILE=") {
+			cmd.Env = append(cmd.Env[:i], cmd.Env[i+1:]...)
+		}
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, string(out))
