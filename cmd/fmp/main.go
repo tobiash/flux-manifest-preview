@@ -361,12 +361,13 @@ Use --init to generate a complete .fmp.yaml config file in the repo.`,
 }
 
 // Semantic exit codes for agent-friendly error handling.
-//   0 = success
-//   1 = differences found (diff only) or generic error
-//   2 = user input error (bad args, missing file, invalid config)
-//   3 = dependency failure (Helm chart missing, git error, network)
-//   5 = policy violation
-//   10 = unexpected internal error
+//
+//	0 = success
+//	1 = differences found (diff only) or generic error
+//	2 = user input error (bad args, missing file, invalid config)
+//	3 = dependency failure (Helm chart missing, git error, network)
+//	5 = policy violation
+//	10 = unexpected internal error
 var (
 	ErrUserInput       = errors.New("user input error")
 	ErrDependency      = errors.New("dependency failure")
@@ -401,9 +402,9 @@ func exitCodeFor(err error) int {
 
 // jsonErrorEnvelope is the structured error output used when --output json is set.
 type jsonErrorEnvelope struct {
-	Status string    `json:"status"`
+	Status string      `json:"status"`
 	Data   interface{} `json:"data"`
-	Error  jsonError `json:"error"`
+	Error  jsonError   `json:"error"`
 }
 
 type jsonError struct {

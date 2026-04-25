@@ -220,9 +220,9 @@ func (p *Preview) RenderJSON(path string, out io.Writer) error {
 
 // TestResult is the JSON representation of a test run.
 type TestResult struct {
-	Status   string       `json:"status"`
-	Warnings []TestIssue  `json:"warnings,omitempty"`
-	Errors   []TestIssue  `json:"errors,omitempty"`
+	Status   string      `json:"status"`
+	Warnings []TestIssue `json:"warnings,omitempty"`
+	Errors   []TestIssue `json:"errors,omitempty"`
 }
 
 // TestIssue describes a single warning or error encountered during testing.

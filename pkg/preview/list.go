@@ -20,16 +20,16 @@ type ObjectRef struct {
 
 // KustomizationItem is the JSON representation of a Flux Kustomization.
 type KustomizationItem struct {
-	ObjectRef ObjectRef `json:"objectRef"`
-	Path      string    `json:"path,omitempty"`
+	ObjectRef ObjectRef  `json:"objectRef"`
+	Path      string     `json:"path,omitempty"`
 	SourceRef *ObjectRef `json:"sourceRef,omitempty"`
 }
 
 // HelmReleaseItem is the JSON representation of a HelmRelease.
 type HelmReleaseItem struct {
-	ObjectRef ObjectRef `json:"objectRef"`
-	Chart     string    `json:"chart,omitempty"`
-	Version   string    `json:"version,omitempty"`
+	ObjectRef ObjectRef  `json:"objectRef"`
+	Chart     string     `json:"chart,omitempty"`
+	Version   string     `json:"version,omitempty"`
 	SourceRef *ObjectRef `json:"sourceRef,omitempty"`
 }
 

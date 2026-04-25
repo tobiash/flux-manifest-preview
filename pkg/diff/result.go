@@ -3,11 +3,10 @@ package diff
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 
-	k8qdiff "github.com/tobiash/k8q/pkg/diff"
 	"github.com/tobiash/flux-manifest-preview/pkg/render"
+	k8qdiff "github.com/tobiash/k8q/pkg/diff"
 	"sigs.k8s.io/kustomize/kyaml/resid"
 )
 
@@ -93,7 +92,7 @@ func (r *DiffResult) ToJSON() *DiffResultJSON {
 		oldYaml := mustYamlMap(c.Old)
 		newYaml := mustYamlMap(c.New)
 		u := computeDiff(c.ID.String(), oldYaml, newYaml)
-		fmt.Fprintf(&diffBuf, "%v", u)
+		formatUnified(&diffBuf, u)
 		out.Modified = append(out.Modified, DiffChangeJSON{
 			ObjectRef: ObjectRef{
 				APIVersion: gvkAPIVersion(c.ID.Gvk.Group, c.ID.Gvk.Version),
@@ -156,7 +155,7 @@ func DiffWithResult(a, b *render.Render, w io.Writer) (*DiffResult, error) {
 			New:       obj,
 		})
 		u := computeDiff(id.String(), "", yaml)
-		fmt.Fprintf(w, "%v", u)
+		formatUnified(w, u)
 	}
 
 	for _, key := range result.Removed {
@@ -177,7 +176,7 @@ func DiffWithResult(a, b *render.Render, w io.Writer) (*DiffResult, error) {
 			Old:       obj,
 		})
 		u := computeDiff(id.String(), yaml, "")
-		fmt.Fprintf(w, "%v", u)
+		formatUnified(w, u)
 	}
 
 	for _, change := range result.Modified {
@@ -206,7 +205,7 @@ func DiffWithResult(a, b *render.Render, w io.Writer) (*DiffResult, error) {
 			New:       mapOrNil(br),
 		})
 		u := computeDiff(id.String(), aYaml, bYaml)
-		fmt.Fprintf(w, "%v", u)
+		formatUnified(w, u)
 	}
 
 	return fmpResult, nil
