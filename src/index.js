@@ -30,8 +30,11 @@ async function run() {
 	    })
 
 	    const report = readReport()
-	    await maybeUploadHTMLReport(report)
-	    await maybeSyncComment(report)
+	    let reportUrl = null
+	    if (booleanInput('html-report', false)) {
+	      reportUrl = await maybeUploadHTMLReport(report)
+	    }
+	    await maybeSyncComment(report, reportUrl)
 	    try {
 	      await maybeSyncLabels(report)
 	    } catch (err) {
@@ -50,24 +53,102 @@ async function run() {
 }
 
 async function maybeUploadHTMLReport(report) {
-  if (!booleanInput('html-report', false)) {
-    return
-  }
   if (!report || !report.html_report_file) {
     core.warning('Skipping HTML report upload because fmp did not write html_report_file')
-    return
+    return null
   }
   if (!fs.existsSync(report.html_report_file)) {
     core.warning(`Skipping HTML report upload because ${report.html_report_file} does not exist`)
-    return
+    return null
   }
 
-  const artifactName = stringInput('html-report-name', 'flux-manifest-preview-report')
-  const retentionDays = integerInput('html-report-retention-days', 7)
-  const rootDirectory = path.dirname(report.html_report_file)
-  const client = new DefaultArtifactClient()
-  await client.uploadArtifact(artifactName, [report.html_report_file], rootDirectory, {retentionDays})
-  core.setOutput('html-report-artifact', artifactName)
+  const htmlContent = fs.readFileSync(report.html_report_file, 'utf8')
+  const {owner, repo} = github.context.repo
+  const runId = github.context.runId
+  const pagesPath = stringInput('html-report-pages-path', 'fmp-reports')
+  let reportUrl = null
+
+  if (booleanInput('html-report-pages', false)) {
+    reportUrl = await deployToGitHubPages(htmlContent, `${pagesPath}/${runId}`, 'index.html')
+  }
+
+  if (!reportUrl) {
+    const artifactName = stringInput('html-report-name', 'flux-manifest-preview-report')
+    const retentionDays = integerInput('html-report-retention-days', 7)
+    const rootDirectory = path.dirname(report.html_report_file)
+    const client = new DefaultArtifactClient()
+    const result = await client.uploadArtifact(artifactName, [report.html_report_file], rootDirectory, {retentionDays})
+    reportUrl = `https://github.com/${owner}/${repo}/actions/runs/${runId}/artifacts/${result.id}`
+    core.setOutput('html-report-artifact', artifactName)
+  }
+
+  core.setOutput('html-report-url', reportUrl)
+  return reportUrl
+}
+
+async function deployToGitHubPages(htmlContent, dirPath, fileName) {
+  const token = stringInput('github-token', '')
+  if (token === '') {
+    core.warning('Skipping GitHub Pages deployment because github-token is empty')
+    return null
+  }
+
+  const octokit = github.getOctokit(token)
+  const {owner, repo} = github.context.repo
+  const branch = 'gh-pages'
+
+  let baseTree
+  try {
+    const {data: ref} = await octokit.rest.git.getRef({owner, repo, ref: `heads/${branch}`})
+    const {data: commit} = await octokit.rest.git.getCommit({owner, repo, commit_sha: ref.object.sha})
+    baseTree = commit.tree.sha
+  } catch {
+    const {data: masterRef} = await octokit.rest.git.getRef({owner, repo, ref: 'heads/main'})
+    const emptyTree = await octokit.rest.git.createTree({owner, repo, tree: [], base_tree: masterRef.object.sha})
+    const {data: initCommit} = await octokit.rest.git.createCommit({
+      owner, repo,
+      message: 'initialize gh-pages',
+      tree: emptyTree.sha,
+      parents: []
+    })
+    await octokit.rest.git.createRef({owner, repo, ref: `refs/heads/${branch}`, sha: initCommit.sha})
+    baseTree = null
+  }
+
+  const blob = await octokit.rest.git.createBlob({
+    owner, repo,
+    content: htmlContent,
+    encoding: 'utf-8'
+  })
+
+  const treeItems = [{
+    path: `${dirPath}/${fileName}`,
+    mode: '100644',
+    type: 'blob',
+    sha: blob.data.sha
+  }]
+
+  const tree = await octokit.rest.git.createTree({
+    owner, repo,
+    tree: treeItems,
+    base_tree: baseTree || undefined
+  })
+
+  const parentRef = await octokit.rest.git.getRef({owner, repo, ref: `heads/${branch}`})
+  const newCommit = await octokit.rest.git.createCommit({
+    owner, repo,
+    message: `deploy flux manifest preview report`,
+    tree: tree.data.sha,
+    parents: [parentRef.data.object.sha]
+  })
+
+  await octokit.rest.git.updateRef({
+    owner, repo,
+    ref: `heads/${branch}`,
+    sha: newCommit.data.sha
+  })
+
+  return `https://${owner}.github.io/${repo}/${dirPath}/${fileName}`
 }
 
 async function resolveBinaryPath() {
@@ -139,7 +220,7 @@ function readReport() {
   return JSON.parse(fs.readFileSync(reportPath, 'utf8'))
 }
 
-async function maybeSyncComment(report) {
+async function maybeSyncComment(report, reportUrl) {
   if (!booleanInput('comment', false)) {
     return
   }
@@ -194,12 +275,10 @@ async function maybeSyncComment(report) {
   const body = fs.readFileSync(commentPath, 'utf8')
   let finalBody = body
 
-  if (booleanInput('html-report', false) && report.html_report_file) {
-    const artifactName = stringInput('html-report-name', 'flux-manifest-preview-report')
-    const runId = github.context.runId
-    const {owner, repo} = github.context.repo
-    const artifactUrl = `https://github.com/${owner}/${repo}/actions/runs/${runId}/artifacts/${artifactName}`
-    const reportLink = `\n📊 **[View interactive HTML report](${artifactUrl})** (download, extract, open in browser)\n\n`
+  if (reportUrl) {
+    const isPages = reportUrl.includes('github.io')
+    const label = isPages ? 'View interactive HTML report' : 'Download interactive HTML report'
+    const reportLink = `\n📊 **[${label}](${reportUrl})**\n\n`
     finalBody = body.replace('<!-- fmp-comment-marker -->', reportLink + '<!-- fmp-comment-marker -->')
   }
 

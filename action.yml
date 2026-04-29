@@ -118,6 +118,14 @@ inputs:
     description: 'Maximum bytes of per-resource diff content embedded in the HTML report'
     required: false
     default: '2000000'
+  html-report-pages:
+    description: 'Deploy the HTML report to GitHub Pages (requires Pages enabled on gh-pages branch)'
+    required: false
+    default: 'false'
+  html-report-pages-path:
+    description: 'Subdirectory on the gh-pages branch to deploy reports to'
+    required: false
+    default: 'fmp-reports'
   fail-on-warning:
     description: 'Fail the step on warnings'
     required: false
@@ -172,6 +180,8 @@ outputs:
     description: 'Path to the generated HTML report index file'
   html-report-artifact:
     description: 'Name of the uploaded HTML report artifact'
+  html-report-url:
+    description: 'Direct URL to the interactive HTML report (GitHub Pages or artifact)'
   export-dir:
     description: 'Directory where rendered manifests were exported'
   classifications-json:
