@@ -36,6 +36,8 @@ var (
 	helmRelease     string
 	diffSummary     bool
 	diffSummaryOnly bool
+	diffHTML        bool
+	diffHTMLOpen    bool
 	initConfig      bool
 
 	helmRegistryConfig   string
@@ -111,6 +113,9 @@ inputs, use explicit git: or path: prefixes.`,
 		Args: validateDiffArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			log := cliLogger()
+			if diffHTML {
+				return runDiffHTML(log, args)
+			}
 			if outputFormat == "json" {
 				return runDiffJSON(log, args, os.Stdout)
 			}
@@ -122,6 +127,8 @@ inputs, use explicit git: or path: prefixes.`,
 	diffCmd.Flags().StringVar(&helmRelease, "hr", "", "Filter diff to a specific HelmRelease by name")
 	diffCmd.Flags().BoolVar(&diffSummary, "summary", false, "Print a human-readable change summary to stderr before the raw diff")
 	diffCmd.Flags().BoolVar(&diffSummaryOnly, "summary-only", false, "Print only the human-readable summary and suppress the raw diff")
+	diffCmd.Flags().BoolVar(&diffHTML, "html", false, "Generate an HTML report and open it in the browser")
+	diffCmd.Flags().BoolVar(&diffHTMLOpen, "html-open", true, "Open the HTML report in the browser (use --html-open=false to suppress)")
 	testCmd := &cobra.Command{
 		Use:   "test <path>",
 		Short: "Validate all Kustomizations build and HelmReleases render",

@@ -2,6 +2,7 @@
   const data = JSON.parse(document.getElementById('fmp-report-data').textContent)
   const app = document.getElementById('app')
   const filters = {query: '', action: '', kind: '', namespace: '', producer: ''}
+  let focusedIndex = -1
 
   function el(tag, attrs = {}, children = []) {
     const node = document.createElement(tag)
@@ -20,7 +21,8 @@
       const [path, query] = hash.split('?')
       return {name: 'resource', index: Number(path.split('/')[1]), view: new URLSearchParams(query || '').get('view') || 'unified'}
     }
-    return {name: hash}
+    const [name, query] = hash.split('?')
+    return {name, params: new URLSearchParams(query || '')}
   }
 
   function setActiveNav(name) {
@@ -30,8 +32,9 @@
   function render() {
     const r = route()
     setActiveNav(r.name === 'resource' ? 'resources' : r.name)
+    focusedIndex = -1
     app.replaceChildren()
-    if (r.name === 'resources') renderResources()
+    if (r.name === 'resources') renderResources(r.params)
     else if (r.name === 'resource') renderResource(r.index, r.view)
     else renderOverview()
     app.focus({preventScroll: true})
@@ -62,18 +65,17 @@
 
   function summaryGrid() {
     return el('section', {class: 'summary-grid'}, [
-      metric('added', `+${data.summary.added}`, 'New resources'),
-      metric('modified', `~${data.summary.modified}`, 'Modified resources'),
-      metric('deleted', `-${data.summary.deleted}`, 'Deleted resources'),
-      metric('', `${data.summary.total}`, 'Total changes')
+      metric('added', `+${data.summary.added}`, 'New resources', 'added'),
+      metric('modified', `~${data.summary.modified}`, 'Modified resources', 'modified'),
+      metric('deleted', `-${data.summary.deleted}`, 'Deleted resources', 'deleted'),
+      metric('', `${data.summary.total}`, 'Total changes', '')
     ])
   }
 
-  function metric(kind, value, label) {
-    return el('div', {class: `metric ${kind}`}, [
-      el('span', {class: 'metric-value', text: value}),
-      el('span', {class: 'metric-label', text: label})
-    ])
+  function metric(kind, value, label, action) {
+    const href = action !== undefined ? `#resources${action ? '?action=' + action : ''}` : null
+    if (href) return el('a', {href, class: `metric ${kind}`}, [el('span', {class: 'metric-value', text: value}), el('span', {class: 'metric-label', text: label})])
+    return el('div', {class: `metric ${kind}`}, [el('span', {class: 'metric-value', text: value}), el('span', {class: 'metric-label', text: label})])
   }
 
   function actionLinks() {
@@ -117,20 +119,33 @@
     app.append(list)
   }
 
-  function renderResources() {
+  function renderResources(params) {
+    if (params) {
+      const action = params.get('action')
+      if (action) filters.action = action
+    }
+    app.replaceChildren()
     app.append(el('div', {class: 'eyebrow', text: 'Resource Browser'}), el('h1', {text: 'Changed Resources'}), filterBar())
-    const list = el('div', {class: 'resource-list'})
+    renderFilteredList()
+  }
+
+  function renderFilteredList() {
+    let list = app.querySelector('.resource-list')
+    if (list) list.replaceChildren()
+    else { list = el('div', {class: 'resource-list'}); app.append(list) }
     const rows = filteredResources()
     for (const res of rows) list.append(resourceCard(res))
     if (rows.length === 0) list.append(el('div', {class: 'empty-state', text: 'No resources match the current filters.'}))
-    app.append(list)
+    const count = app.querySelector('.filter-count')
+    if (count) count.textContent = `${rows.length} of ${data.resources.length} resources`
+    focusedIndex = -1
   }
 
   function filterBar() {
     const bar = el('div', {class: 'filterbar'})
     const search = el('input', {placeholder: 'Search name, namespace, kind, producer', value: filters.query})
-    search.addEventListener('input', () => { filters.query = search.value.toLowerCase(); renderResources() })
-    bar.append(search, select('action', [''].concat(unique(data.resources.map(r => r.action)))), select('kind', [''].concat(unique(data.resources.map(r => r.kind)))), select('namespace', [''].concat(unique(data.resources.map(r => r.namespace || 'cluster-scoped')))), select('producer', [''].concat(unique(data.resources.map(r => r.producer || 'unknown')))))
+    search.addEventListener('input', () => { filters.query = search.value; renderFilteredList() })
+    bar.append(search, select('action', [''].concat(unique(data.resources.map(r => r.action)))), select('kind', [''].concat(unique(data.resources.map(r => r.kind)))), select('namespace', [''].concat(unique(data.resources.map(r => r.namespace || 'cluster-scoped')))), select('producer', [''].concat(unique(data.resources.map(r => r.producer || 'unknown')))), el('span', {class: 'filter-count', text: `${filteredResources().length} of ${data.resources.length} resources`}))
     return bar
   }
 
@@ -138,7 +153,7 @@
     const node = el('select')
     for (const value of values) node.append(el('option', {value, text: value || `All ${key}s`}))
     node.value = filters[key]
-    node.addEventListener('change', () => { filters[key] = node.value; renderResources() })
+    node.addEventListener('change', () => { filters[key] = node.value; renderFilteredList() })
     return node
   }
 
@@ -157,15 +172,62 @@
     })
   }
 
+  function sparkline(res) {
+    const total = res.addedLines + res.deletedLines
+    if (total === 0) return el('div', {class: 'sparkline'})
+    const wrap = el('div', {class: 'sparkline'})
+    const addedPct = (res.addedLines / total * 100).toFixed(1)
+    const deletedPct = (res.deletedLines / total * 100).toFixed(1)
+    const addedBar = el('div', {class: 'sparkline-bar added', style: `width:${addedPct}%`})
+    const deletedBar = el('div', {class: 'sparkline-bar deleted', style: `width:${deletedPct}%;left:${addedPct}%`})
+    wrap.append(addedBar, deletedBar)
+    return wrap
+  }
+
   function resourceCard(res) {
-    return el('a', {class: 'resource-card', href: `#resource/${res.index}`}, [
+    return el('a', {class: 'resource-card', href: `#resource/${res.index}`, tabindex: '0'}, [
       el('div', {class: 'resource-title'}, [
         el('strong', {text: `${res.kind} / ${res.namespace || 'cluster-scoped'} / ${res.name}`}),
         el('span', {class: `pill ${res.action}`, text: res.action})
       ]),
       el('div', {class: 'resource-meta', text: `${res.apiVersion} · Producer: ${res.producer || 'unknown'}`}),
-      el('div', {class: 'resource-foot'}, [el('span', {text: `+${res.addedLines}`}), el('span', {text: `-${res.deletedLines}`})])
+      el('div', {class: 'resource-foot'}, [
+        el('span', {text: `+${res.addedLines}`}),
+        el('span', {text: `-${res.deletedLines}`}),
+        sparkline(res)
+      ])
     ])
+  }
+
+  function diffStats(res) {
+    let added = 0, deleted = 0, context = 0
+    for (const row of res.diffRows) {
+      if (row.type === 'added') added++
+      else if (row.type === 'deleted') deleted++
+      else if (row.type === 'context') context++
+    }
+    return el('div', {class: 'diff-stats'}, [
+      el('span', {class: 'added', text: `+${added} added`}),
+      el('span', {class: 'deleted', text: `-${deleted} deleted`}),
+      el('span', {class: 'context', text: `${context} unchanged`})
+    ])
+  }
+
+  function copyButton(res) {
+    const btn = el('button', {class: 'copy-btn', text: 'Copy diff'})
+    btn.addEventListener('click', () => {
+      const lines = res.diffRows.map(row => {
+        if (row.type === 'hunk') return row.oldText
+        const sign = row.type === 'added' ? '+' : row.type === 'deleted' ? '-' : ' '
+        return sign + (row.type === 'added' ? row.newText : row.oldText)
+      })
+      navigator.clipboard.writeText(lines.join('\n')).then(() => {
+        btn.textContent = 'Copied'
+        btn.classList.add('copied')
+        setTimeout(() => { btn.textContent = 'Copy diff'; btn.classList.remove('copied') }, 1500)
+      })
+    })
+    return btn
   }
 
   function renderResource(index, view) {
@@ -175,8 +237,9 @@
       el('div', {class: 'breadcrumb'}, [el('a', {href: '#resources', text: 'Resources'}), document.createTextNode(` / ${res.kind} / ${res.name}`)]),
       el('section', {class: 'detail-header'}, [
         el('div', {}, [el('div', {class: 'eyebrow', text: res.action}), el('h1', {text: `${res.kind} ${res.name}`}), el('p', {text: `${res.namespace || 'cluster-scoped'} · ${res.apiVersion} · Producer: ${res.producer || 'unknown'}`})]),
-        diffToggle(index, view)
+        el('div', {class: 'detail-actions'}, [diffToggle(index, view), copyButton(res)])
       ]),
+      diffStats(res),
       el('section', {class: 'detail-panel'}, [diffView(res, view)])
     )
   }
@@ -215,6 +278,32 @@
     ])
   }
 
+  function handleKeydown(e) {
+    const cards = () => [...app.querySelectorAll('.resource-card')]
+    const r = route()
+
+    if (r.name === 'resources') {
+      const all = cards()
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        focusedIndex = Math.min(focusedIndex + 1, all.length - 1)
+        all[focusedIndex]?.focus()
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        focusedIndex = Math.max(focusedIndex - 1, 0)
+        all[focusedIndex]?.focus()
+      } else if (e.key === 'Enter' && focusedIndex >= 0 && all[focusedIndex]) {
+        location.hash = all[focusedIndex].getAttribute('href').replace(/^.*#/, '#')
+      }
+    }
+
+    if (r.name === 'resource' && e.key === 'Escape') {
+      e.preventDefault()
+      location.hash = '#resources'
+    }
+  }
+
   window.addEventListener('hashchange', render)
+  window.addEventListener('keydown', handleKeydown)
   render()
 })()

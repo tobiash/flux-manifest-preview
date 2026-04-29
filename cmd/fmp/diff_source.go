@@ -10,13 +10,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/go-logr/logr"
 	"github.com/spf13/cobra"
 
 	"github.com/tobiash/flux-manifest-preview/pkg/config"
+	"github.com/tobiash/flux-manifest-preview/pkg/diff"
 	gitrepoexpander "github.com/tobiash/flux-manifest-preview/pkg/expander/gitrepo"
+	"github.com/tobiash/flux-manifest-preview/pkg/githubaction"
 	"github.com/tobiash/flux-manifest-preview/pkg/policy"
 	"github.com/tobiash/flux-manifest-preview/pkg/preview"
 )
@@ -205,6 +208,155 @@ func runDiffJSON(log logr.Logger, args []string, out io.Writer) error {
 		return fmt.Errorf("%w: %s", ErrPolicyViolation, strings.Join(policyResult.PolicyFailures, ", "))
 	}
 	return nil
+}
+
+func runDiffHTML(log logr.Logger, args []string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("determining current directory: %w", err)
+	}
+
+	plan, err := resolveDiffPlan(args, cwd)
+	if err != nil {
+		return err
+	}
+
+	leftPath, leftCleanup, err := plan.left.materialize(context.Background())
+	if err != nil {
+		return err
+	}
+	if leftCleanup != nil {
+		defer leftCleanup()
+	}
+
+	rightPath, rightCleanup, err := plan.right.materialize(context.Background())
+	if err != nil {
+		return err
+	}
+	if rightCleanup != nil {
+		defer rightCleanup()
+	}
+
+	opts, err := buildOpts(log, plan.configRoot)
+	if err != nil {
+		return err
+	}
+	if helmRelease != "" {
+		opts = append(opts, preview.WithHelmReleaseFilter(helmRelease))
+	}
+
+	p, err := preview.New(opts...)
+	if err != nil {
+		return fmt.Errorf("error creating preview: %w", err)
+	}
+
+	var diffText bytes.Buffer
+	result, err := p.DiffResult(context.Background(), leftPath, rightPath, &diffText)
+	if err != nil {
+		return err
+	}
+
+	cfg, err := loadConfigForRepo(plan.configRoot, configFile)
+	if err != nil {
+		if configFile != "" {
+			return fmt.Errorf("loading config %s: %w", configFile, err)
+		}
+		return fmt.Errorf("loading config: %w", err)
+	}
+
+	var policyResult *policy.Result
+	if cfg != nil {
+		policyResult, err = policy.Evaluate(context.Background(), result, cfg.Policies, policyBaseDir(plan.configRoot, cfg))
+		if err != nil {
+			return fmt.Errorf("evaluating policies: %w", err)
+		}
+	}
+
+	report := buildActionReport(result, policyResult, diffText.String())
+	req := &githubaction.Request{
+		BaseRef:                        plan.left.label(),
+		Repo:                           plan.right.label(),
+		HTMLReportMaxResourceDiffBytes: 2_000_000,
+	}
+	html, err := githubaction.RenderHTMLReport(githubaction.BuildHTMLReportData(req, report, result))
+	if err != nil {
+		return fmt.Errorf("rendering html report: %w", err)
+	}
+
+	tmpDir, err := os.MkdirTemp("", "fmp-html-report-*")
+	if err != nil {
+		return fmt.Errorf("creating temp dir: %w", err)
+	}
+	htmlFile := filepath.Join(tmpDir, "index.html")
+	if err := os.WriteFile(htmlFile, []byte(html), 0o644); err != nil {
+		return fmt.Errorf("writing html report: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "HTML report written to %s\n", htmlFile)
+	if diffHTMLOpen {
+		return openBrowser(htmlFile)
+	}
+	return nil
+}
+
+func buildActionReport(result *diff.DiffResult, policyResult *policy.Result, fullDiff string) *githubaction.ActionReport {
+	report := &githubaction.ActionReport{
+		Status:            githubaction.StatusFromCounts(result.TotalChanged() > 0, 0, 0),
+		Changed:           result.TotalChanged() > 0,
+		DiffBytes:         len(fullDiff),
+		ResourcesAdded:    len(result.Added),
+		ResourcesModified: len(result.Modified),
+		ResourcesDeleted:  len(result.Deleted),
+		ResourcesTotal:    result.TotalChanged(),
+		ByKind:            result.ByKind(),
+		KindBreakdown:     buildKindBreakdown(result),
+	}
+	if policyResult != nil {
+		report.Classifications = policyResult.Classifications
+		report.Violations = policyResult.Violations
+		report.Labels = policyResult.Labels
+		report.PolicyFailures = policyResult.PolicyFailures
+		report.PolicyFailed = policyResult.PolicyFailed
+		if report.PolicyFailed {
+			report.Status = githubaction.StatusError
+		}
+	}
+	return report
+}
+
+func openBrowser(url string) error {
+	var cmd string
+	var args []string
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = "open"
+		args = []string{url}
+	case "windows":
+		cmd = "cmd"
+		args = []string{"/c", "start", url}
+	default:
+		cmd = "xdg-open"
+		args = []string{url}
+	}
+	bin, err := exec.LookPath(cmd)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Could not find %q to open browser; open the file manually.\n", cmd)
+		return nil
+	}
+	return exec.Command(bin, args...).Start()
+}
+
+func (s diffSource) label() string {
+	switch s.kind {
+	case diffSourceRevision:
+		return s.raw
+	case diffSourceWorktree:
+		return "worktree"
+	case diffSourcePath:
+		return s.raw
+	default:
+		return s.raw
+	}
 }
 
 func resolveDiffPlan(args []string, cwd string) (*diffPlan, error) {
