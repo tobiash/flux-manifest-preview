@@ -337,6 +337,8 @@ Use `fmp` in your CI/CD pipelines to review PRs automatically.
 | `html-report-name` | HTML report artifact name | `flux-manifest-preview-report` |
 | `html-report-retention-days` | HTML report artifact retention in days | `7` |
 | `html-report-max-resource-diff-bytes` | Max per-resource diff bytes embedded in the HTML report | `2000000` |
+| `html-report-pages` | Deploy HTML report to GitHub Pages (`gh-pages` branch) | `false` |
+| `html-report-pages-path` | Subdirectory on the `gh-pages` branch for reports | `fmp-reports` |
 | `export-dir` | Export rendered manifests directory | |
 | `export-changed-only` | Only export changed manifests | `false` |
 | `fail-on-warning` | Fail the step on warnings | `false` |
@@ -362,6 +364,7 @@ Use `fmp` in your CI/CD pipelines to review PRs automatically.
 | `report-file` | Path to the structured JSON report |
 | `html-report-file` | Path to the generated HTML report index file |
 | `html-report-artifact` | Name of the uploaded HTML report artifact |
+| `html-report-url` | Direct URL to the interactive HTML report (GitHub Pages or artifact) |
 | `export-dir` | Directory where manifests were exported |
 | `classifications-json` | JSON array of matched policy classifications |
 | `violations-json` | JSON array of matched policy violations |
@@ -390,6 +393,18 @@ Use `fmp` in your CI/CD pipelines to review PRs automatically.
 ```
 
 The HTML report opens with a long-form impact overview, then provides a resource browser with kind, namespace, producer, action, and search filters. Each resource opens a detailed diff view with unified and side-by-side modes.
+
+**Deploy to GitHub Pages (public repos or paid private repos):**
+```yaml
+- uses: tobiash/flux-manifest-preview@vX.Y.Z
+  with:
+    repo: .
+    base-ref: origin/main
+    html-report: true
+    html-report-pages: true
+```
+
+This deploys the report to the `gh-pages` branch and outputs a direct browser link. For private repos on free plans, the report is available as a downloadable artifact. Install [artifact.ci](https://artifact.ci) for in-browser viewing of artifact HTML reports on private repos.
 
 **Export for downstream validation:**
 ```yaml
