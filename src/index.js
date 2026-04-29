@@ -192,12 +192,23 @@ async function maybeSyncComment(report) {
   }
 
   const body = fs.readFileSync(commentPath, 'utf8')
+  let finalBody = body
+
+  if (booleanInput('html-report', false) && report.html_report_file) {
+    const artifactName = stringInput('html-report-name', 'flux-manifest-preview-report')
+    const runId = github.context.runId
+    const {owner, repo} = github.context.repo
+    const artifactUrl = `https://github.com/${owner}/${repo}/actions/runs/${runId}/artifacts/${artifactName}`
+    const reportLink = `\n📊 **[View interactive HTML report](${artifactUrl})** (download, extract, open in browser)\n\n`
+    finalBody = body.replace('<!-- fmp-comment-marker -->', reportLink + '<!-- fmp-comment-marker -->')
+  }
+
   if (existingComment) {
     await octokit.rest.issues.updateComment({
       owner,
       repo,
       comment_id: existingComment.id,
-      body
+      body: finalBody
     })
     return
   }
@@ -206,7 +217,7 @@ async function maybeSyncComment(report) {
     owner,
     repo,
     issue_number: issueNumber,
-    body
+    body: finalBody
   })
 }
 
