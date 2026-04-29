@@ -1,7 +1,7 @@
 import * as core from '@actions/core'
 import * as exec from '@actions/exec'
 import * as github from '@actions/github'
-import * as artifact from '@actions/artifact'
+import {DefaultArtifactClient} from '@actions/artifact'
 import * as tc from '@actions/tool-cache'
 import fs from 'fs'
 import os from 'os'
@@ -65,7 +65,8 @@ async function maybeUploadHTMLReport(report) {
   const artifactName = stringInput('html-report-name', 'flux-manifest-preview-report')
   const retentionDays = integerInput('html-report-retention-days', 7)
   const rootDirectory = path.dirname(report.html_report_file)
-  await artifact.default.uploadArtifact(artifactName, [report.html_report_file], rootDirectory, {retentionDays})
+  const client = new DefaultArtifactClient()
+  await client.uploadArtifact(artifactName, [report.html_report_file], rootDirectory, {retentionDays})
   core.setOutput('html-report-artifact', artifactName)
 }
 
