@@ -25,11 +25,12 @@ type ActionReport struct {
 	DiffTruncated bool   `json:"diff_truncated"`
 	DiffPreview   string `json:"diff_preview,omitempty"`
 
-	DiffFile    string `json:"diff_file,omitempty"`
-	SummaryFile string `json:"summary_file,omitempty"`
-	CommentFile string `json:"comment_file,omitempty"`
-	ReportFile  string `json:"report_file,omitempty"`
-	ExportDir   string `json:"export_dir,omitempty"`
+	DiffFile       string `json:"diff_file,omitempty"`
+	SummaryFile    string `json:"summary_file,omitempty"`
+	CommentFile    string `json:"comment_file,omitempty"`
+	ReportFile     string `json:"report_file,omitempty"`
+	HTMLReportFile string `json:"html_report_file,omitempty"`
+	ExportDir      string `json:"export_dir,omitempty"`
 
 	ResourcesAdded    int `json:"resources_added"`
 	ResourcesModified int `json:"resources_modified"`

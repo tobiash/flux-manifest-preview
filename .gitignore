@@ -24,6 +24,7 @@
 .mux/
 .neovate/
 .openhands/
+.opencode/
 .pi/
 .pochi/
 .qoder/
@@ -38,6 +39,12 @@
 # Skill packs
 skills/
 skills-lock.json
+
+# AI tool configs
+opencode.json
+
+# Stitch design exports
+stitch-designs/
 
 # Binary built in repo root
 /fmp

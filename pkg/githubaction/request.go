@@ -39,11 +39,15 @@ type Request struct {
 	ExportChangedOnly bool
 
 	// Reporting
-	WriteSummary       bool
-	Comment            bool
-	CommentMode        string // changes, always, failure
-	MaxInlineDiffBytes int
-	DiffPreviewLines   int
+	WriteSummary                   bool
+	Comment                        bool
+	CommentMode                    string // changes, always, failure
+	MaxInlineDiffBytes             int
+	DiffPreviewLines               int
+	HTMLReport                     bool
+	HTMLReportName                 string
+	HTMLReportRetentionDays        int
+	HTMLReportMaxResourceDiffBytes int
 
 	// Policy
 	FailOnWarning bool
@@ -53,34 +57,44 @@ type Request struct {
 // ParseRequestFromEnv builds a Request from GitHub Actions inputs (passed as env vars).
 func ParseRequestFromEnv() (*Request, error) {
 	r := &Request{
-		Repo:               getInput("repo", "."),
-		BaseRef:            getInput("base-ref", ""),
-		BaseSHA:            getInput("base-sha", ""),
-		RepoA:              getInput("repo-a", ""),
-		RepoB:              getInput("repo-b", ""),
-		Paths:              parseLines(getInput("paths", "")),
-		Recursive:          parseBool(getInput("recursive", "false")),
-		RenderHelm:         parseBool(getInput("helm", "true")),
-		ResolveGit:         parseBool(getInput("resolve-git", "false")),
-		Sort:               parseBool(getInput("sort", "false")),
-		ExcludeCRDs:        parseBool(getInput("exclude-crds", "false")),
-		SOPSDecrypt:        parseBool(getInput("sops-decrypt", "false")),
-		HelmRelease:        getInput("helm-release", ""),
-		ConfigFile:         getInput("config", ""),
-		FilterFile:         getInput("filter-file", ""),
-		FilterYAML:         getInput("filter-yaml", ""),
-		RegistryConfig:     getInput("registry-config", ""),
-		RepositoryConfig:   getInput("repository-config", ""),
-		RepositoryCache:    getInput("repository-cache", ""),
-		ExportDir:          getInput("export-dir", ""),
-		ExportChangedOnly:  parseBool(getInput("export-changed-only", "false")),
-		WriteSummary:       parseBool(getInput("write-summary", "true")),
-		Comment:            parseBool(getInput("comment", "false")),
-		CommentMode:        getInput("comment-mode", "changes"),
-		MaxInlineDiffBytes: parseInt(getInput("max-inline-diff-bytes", "50000")),
-		DiffPreviewLines:   parseInt(getInput("diff-preview-lines", "200")),
-		FailOnWarning:      parseBool(getInput("fail-on-warning", "false")),
-		FailOnError:        parseBool(getInput("fail-on-error", "true")),
+		Repo:                           getInput("repo", "."),
+		BaseRef:                        getInput("base-ref", ""),
+		BaseSHA:                        getInput("base-sha", ""),
+		RepoA:                          getInput("repo-a", ""),
+		RepoB:                          getInput("repo-b", ""),
+		Paths:                          parseLines(getInput("paths", "")),
+		Recursive:                      parseBool(getInput("recursive", "false")),
+		RenderHelm:                     parseBool(getInput("helm", "true")),
+		ResolveGit:                     parseBool(getInput("resolve-git", "false")),
+		Sort:                           parseBool(getInput("sort", "false")),
+		ExcludeCRDs:                    parseBool(getInput("exclude-crds", "false")),
+		SOPSDecrypt:                    parseBool(getInput("sops-decrypt", "false")),
+		HelmRelease:                    getInput("helm-release", ""),
+		ConfigFile:                     getInput("config", ""),
+		FilterFile:                     getInput("filter-file", ""),
+		FilterYAML:                     getInput("filter-yaml", ""),
+		RegistryConfig:                 getInput("registry-config", ""),
+		RepositoryConfig:               getInput("repository-config", ""),
+		RepositoryCache:                getInput("repository-cache", ""),
+		ExportDir:                      getInput("export-dir", ""),
+		ExportChangedOnly:              parseBool(getInput("export-changed-only", "false")),
+		WriteSummary:                   parseBool(getInput("write-summary", "true")),
+		Comment:                        parseBool(getInput("comment", "false")),
+		CommentMode:                    getInput("comment-mode", "changes"),
+		MaxInlineDiffBytes:             parseInt(getInput("max-inline-diff-bytes", "50000")),
+		DiffPreviewLines:               parseInt(getInput("diff-preview-lines", "200")),
+		HTMLReport:                     parseBool(getInput("html-report", "false")),
+		HTMLReportName:                 getInput("html-report-name", "flux-manifest-preview-report"),
+		HTMLReportRetentionDays:        parseInt(getInput("html-report-retention-days", "7")),
+		HTMLReportMaxResourceDiffBytes: parseInt(getInput("html-report-max-resource-diff-bytes", "2000000")),
+		FailOnWarning:                  parseBool(getInput("fail-on-warning", "false")),
+		FailOnError:                    parseBool(getInput("fail-on-error", "true")),
+	}
+	if r.HTMLReportRetentionDays <= 0 {
+		r.HTMLReportRetentionDays = 7
+	}
+	if r.HTMLReportMaxResourceDiffBytes <= 0 {
+		r.HTMLReportMaxResourceDiffBytes = 2000000
 	}
 
 	if r.SOPSDecrypt {

@@ -36,3 +36,28 @@ func TestParseRequestFromEnvSupportsMultiplePaths(t *testing.T) {
 		}
 	}
 }
+
+func TestParseRequestFromEnvSupportsHTMLReportInputs(t *testing.T) {
+	t.Setenv("INPUT_HTML_REPORT", "true")
+	t.Setenv("INPUT_HTML_REPORT_NAME", "custom-report")
+	t.Setenv("INPUT_HTML_REPORT_RETENTION_DAYS", "14")
+	t.Setenv("INPUT_HTML_REPORT_MAX_RESOURCE_DIFF_BYTES", "1234")
+
+	req, err := ParseRequestFromEnv()
+	if err != nil {
+		t.Fatalf("ParseRequestFromEnv() error = %v", err)
+	}
+
+	if !req.HTMLReport {
+		t.Fatal("HTMLReport = false, want true")
+	}
+	if req.HTMLReportName != "custom-report" {
+		t.Fatalf("HTMLReportName = %q, want custom-report", req.HTMLReportName)
+	}
+	if req.HTMLReportRetentionDays != 14 {
+		t.Fatalf("HTMLReportRetentionDays = %d, want 14", req.HTMLReportRetentionDays)
+	}
+	if req.HTMLReportMaxResourceDiffBytes != 1234 {
+		t.Fatalf("HTMLReportMaxResourceDiffBytes = %d, want 1234", req.HTMLReportMaxResourceDiffBytes)
+	}
+}

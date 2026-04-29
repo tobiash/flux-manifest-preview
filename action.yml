@@ -102,6 +102,22 @@ inputs:
     description: 'Max diff lines to show in previews'
     required: false
     default: '200'
+  html-report:
+    description: 'Generate and upload a rich HTML report artifact with resource browser and detailed diffs'
+    required: false
+    default: 'false'
+  html-report-name:
+    description: 'Name of the uploaded HTML report artifact'
+    required: false
+    default: 'flux-manifest-preview-report'
+  html-report-retention-days:
+    description: 'Retention period in days for the HTML report artifact'
+    required: false
+    default: '7'
+  html-report-max-resource-diff-bytes:
+    description: 'Maximum bytes of per-resource diff content embedded in the HTML report'
+    required: false
+    default: '2000000'
   fail-on-warning:
     description: 'Fail the step on warnings'
     required: false
@@ -152,6 +168,10 @@ outputs:
     description: 'Path to the comment markdown file'
   report-file:
     description: 'Path to the structured JSON report'
+  html-report-file:
+    description: 'Path to the generated HTML report index file'
+  html-report-artifact:
+    description: 'Name of the uploaded HTML report artifact'
   export-dir:
     description: 'Directory where rendered manifests were exported'
   classifications-json:

@@ -54,6 +54,7 @@ jobs:
           kustomizations: |
             clusters/kube
           helm: 'false'
+          html-report: 'true'
 
       - name: Verify outputs
         run: |
@@ -92,6 +93,16 @@ jobs:
             exit 1
           fi
           echo "Report file exists: ${{ steps.fmp.outputs.report-file }}"
+
+          if [ -z "${{ steps.fmp.outputs.html-report-file }}" ]; then
+            echo "ERROR: html-report-file output is empty"
+            exit 1
+          fi
+          if [ ! -f "${{ steps.fmp.outputs.html-report-file }}" ]; then
+            echo "ERROR: html report file does not exist"
+            exit 1
+          fi
+          grep -q "fmp-report-data" "${{ steps.fmp.outputs.html-report-file }}" || { echo "Missing embedded report data"; exit 1; }
 
   test-cli:
     name: Test fmp CLI commands

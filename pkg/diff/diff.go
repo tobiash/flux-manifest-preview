@@ -63,6 +63,11 @@ func computeDiff(name, before, after string) gotextdiff.Unified {
 	return gotextdiff.ToUnified(name, name, before, edits)
 }
 
+// UnifiedDiff computes a unified diff between before and after strings.
+func UnifiedDiff(name, before, after string) string {
+	return fmt.Sprintf("%v", computeDiff(name, before, after))
+}
+
 func formatUnified(w io.Writer, u gotextdiff.Unified) {
 	_, _ = fmt.Fprintf(w, "%v", u)
 }

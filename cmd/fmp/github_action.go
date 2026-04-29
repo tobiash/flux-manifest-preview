@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/tobiash/flux-manifest-preview/pkg/config"
+	"github.com/tobiash/flux-manifest-preview/pkg/diff"
 	"github.com/tobiash/flux-manifest-preview/pkg/githubaction"
 	"github.com/tobiash/flux-manifest-preview/pkg/policy"
 	"github.com/tobiash/flux-manifest-preview/pkg/preview"
@@ -43,7 +44,7 @@ func runGitHubAction(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	report, err := executeAction(log, req)
+	report, diffResult, err := executeAction(log, req)
 	if err != nil {
 		if inCI {
 			act.Errorf("action execution failed: %v", err)
@@ -102,6 +103,29 @@ func runGitHubAction(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	if req.HTMLReport {
+		htmlDir := filepath.Join(reportDir, "fmp-html-report")
+		if err := os.MkdirAll(htmlDir, 0o755); err != nil {
+			if inCI {
+				act.Warningf("creating html report dir: %v", err)
+			}
+		} else {
+			htmlFile := filepath.Join(htmlDir, "index.html")
+			html, err := githubaction.RenderHTMLReport(githubaction.BuildHTMLReportData(req, report, diffResult))
+			if err != nil {
+				if inCI {
+					act.Warningf("rendering html report: %v", err)
+				}
+			} else if err := os.WriteFile(htmlFile, []byte(html), 0o644); err != nil {
+				if inCI {
+					act.Warningf("writing html report: %v", err)
+				}
+			} else {
+				report.HTMLReportFile = htmlFile
+			}
+		}
+	}
+
 	if err := writeJSON(reportFile, report); err != nil {
 		if inCI {
 			act.Warningf("writing report: %v", err)
@@ -124,6 +148,7 @@ func runGitHubAction(cmd *cobra.Command, args []string) error {
 		act.SetOutput("summary-file", report.SummaryFile)
 		act.SetOutput("comment-file", report.CommentFile)
 		act.SetOutput("report-file", report.ReportFile)
+		act.SetOutput("html-report-file", report.HTMLReportFile)
 		act.SetOutput("export-dir", report.ExportDir)
 		act.SetOutput("classifications-json", mustJSON(report.Classifications))
 		act.SetOutput("violations-json", mustJSON(report.Violations))
@@ -137,22 +162,22 @@ func runGitHubAction(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func executeAction(log logr.Logger, req *githubaction.Request) (*githubaction.ActionReport, error) {
+func executeAction(log logr.Logger, req *githubaction.Request) (*githubaction.ActionReport, *diff.DiffResult, error) {
 	var diffText bytes.Buffer
 
 	cfg, err := loadActionConfig(req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	opts, err := buildActionOpts(log, req, cfg)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	p, err := preview.New(opts...)
 	if err != nil {
-		return nil, fmt.Errorf("creating preview: %w", err)
+		return nil, nil, fmt.Errorf("creating preview: %w", err)
 	}
 
 	left := req.DiffLeft()
@@ -171,7 +196,7 @@ func executeAction(log logr.Logger, req *githubaction.Request) (*githubaction.Ac
 			report.DiffPreview = preview
 			report.DiffTruncated = truncated
 		}
-		return report, err
+		return report, nil, err
 	}
 
 	fullDiff := diffText.String()
@@ -194,7 +219,7 @@ func executeAction(log logr.Logger, req *githubaction.Request) (*githubaction.Ac
 	if cfg != nil {
 		policyResult, err := policy.Evaluate(context.Background(), result, cfg.Policies, policyBaseDir(req.ConfigRoot(), cfg))
 		if err != nil {
-			return nil, fmt.Errorf("evaluating policies: %w", err)
+			return nil, nil, fmt.Errorf("evaluating policies: %w", err)
 		}
 		report.Classifications = policyResult.Classifications
 		report.Violations = policyResult.Violations
@@ -213,7 +238,7 @@ func executeAction(log logr.Logger, req *githubaction.Request) (*githubaction.Ac
 		// TODO: implement manifest export from rendered target resources
 	}
 
-	return report, nil
+	return report, result, nil
 }
 
 func buildActionOpts(log logr.Logger, req *githubaction.Request, cfg *config.Config) ([]preview.Opt, error) {

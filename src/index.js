@@ -1,6 +1,7 @@
 import * as core from '@actions/core'
 import * as exec from '@actions/exec'
 import * as github from '@actions/github'
+import * as artifact from '@actions/artifact'
 import * as tc from '@actions/tool-cache'
 import fs from 'fs'
 import os from 'os'
@@ -29,6 +30,7 @@ async function run() {
 	    })
 
 	    const report = readReport()
+	    await maybeUploadHTMLReport(report)
 	    await maybeSyncComment(report)
 	    try {
 	      await maybeSyncLabels(report)
@@ -45,6 +47,26 @@ async function run() {
   } catch (err) {
     core.setFailed(err instanceof Error ? err.message : String(err))
   }
+}
+
+async function maybeUploadHTMLReport(report) {
+  if (!booleanInput('html-report', false)) {
+    return
+  }
+  if (!report || !report.html_report_file) {
+    core.warning('Skipping HTML report upload because fmp did not write html_report_file')
+    return
+  }
+  if (!fs.existsSync(report.html_report_file)) {
+    core.warning(`Skipping HTML report upload because ${report.html_report_file} does not exist`)
+    return
+  }
+
+  const artifactName = stringInput('html-report-name', 'flux-manifest-preview-report')
+  const retentionDays = integerInput('html-report-retention-days', 7)
+  const rootDirectory = path.dirname(report.html_report_file)
+  await artifact.default.uploadArtifact(artifactName, [report.html_report_file], rootDirectory, {retentionDays})
+  core.setOutput('html-report-artifact', artifactName)
 }
 
 async function resolveBinaryPath() {
@@ -260,6 +282,15 @@ function booleanInput(name, defaultValue) {
     return defaultValue
   }
   return value.toLowerCase() === 'true'
+}
+
+function integerInput(name, defaultValue) {
+  const value = stringInput(name, '')
+  if (value === '') {
+    return defaultValue
+  }
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultValue
 }
 
 void run()

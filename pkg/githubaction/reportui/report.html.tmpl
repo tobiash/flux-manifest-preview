@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flux Manifest Preview Report</title>
+  <style>{{ .CSS }}</style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Technical Pulse</div>
+    <nav aria-label="Report navigation">
+      <a href="#overview" data-route="overview">Overview</a>
+      <a href="#resources" data-route="resources">Resources</a>
+    </nav>
+  </header>
+  <main id="app" class="app" tabindex="-1"></main>
+  <script type="application/json" id="fmp-report-data">{{ .JSON }}</script>
+  <script>{{ .JS }}</script>
+</body>
+</html>

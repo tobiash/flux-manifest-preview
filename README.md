@@ -333,6 +333,10 @@ Use `fmp` in your CI/CD pipelines to review PRs automatically.
 | `comment` | Post/update a sticky PR comment | `false` |
 | `comment-mode` | When to comment (`changes`, `always`, `failure`) | `changes` |
 | `max-inline-diff-bytes` | Max diff bytes to inline | `50000` |
+| `html-report` | Generate and upload a rich HTML report artifact | `false` |
+| `html-report-name` | HTML report artifact name | `flux-manifest-preview-report` |
+| `html-report-retention-days` | HTML report artifact retention in days | `7` |
+| `html-report-max-resource-diff-bytes` | Max per-resource diff bytes embedded in the HTML report | `2000000` |
 | `export-dir` | Export rendered manifests directory | |
 | `export-changed-only` | Only export changed manifests | `false` |
 | `fail-on-warning` | Fail the step on warnings | `false` |
@@ -356,6 +360,8 @@ Use `fmp` in your CI/CD pipelines to review PRs automatically.
 | `summary-file` | Path to the summary markdown |
 | `comment-file` | Path to the comment markdown |
 | `report-file` | Path to the structured JSON report |
+| `html-report-file` | Path to the generated HTML report index file |
+| `html-report-artifact` | Name of the uploaded HTML report artifact |
 | `export-dir` | Directory where manifests were exported |
 | `classifications-json` | JSON array of matched policy classifications |
 | `violations-json` | JSON array of matched policy violations |
@@ -373,6 +379,17 @@ Use `fmp` in your CI/CD pipelines to review PRs automatically.
     comment: true
     comment-mode: changes
 ```
+
+**Rich HTML report artifact:**
+```yaml
+- uses: tobiash/flux-manifest-preview@vX.Y.Z
+  with:
+    repo: .
+    base-ref: origin/main
+    html-report: true
+```
+
+The HTML report opens with a long-form impact overview, then provides a resource browser with kind, namespace, producer, action, and search filters. Each resource opens a detailed diff view with unified and side-by-side modes.
 
 **Export for downstream validation:**
 ```yaml
