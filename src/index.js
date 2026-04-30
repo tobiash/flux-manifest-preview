@@ -77,7 +77,7 @@ async function maybeUploadHTMLReport(report) {
     const retentionDays = integerInput('html-report-retention-days', 7)
     const rootDirectory = path.dirname(report.html_report_file)
     const client = new DefaultArtifactClient()
-    const result = await client.uploadArtifact(artifactName, [report.html_report_file], rootDirectory, {retentionDays})
+    const result = await client.uploadArtifact(artifactName, [report.html_report_file], rootDirectory, {retentionDays, skipArchive: true})
     reportUrl = `https://github.com/${owner}/${repo}/actions/runs/${runId}/artifacts/${result.id}`
     core.setOutput('html-report-artifact', artifactName)
   }
