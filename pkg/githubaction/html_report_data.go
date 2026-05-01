@@ -30,11 +30,12 @@ type HTMLReportMeta struct {
 }
 
 type HTMLReportSummary struct {
-	Added         int                        `json:"added"`
-	Modified      int                        `json:"modified"`
-	Deleted       int                        `json:"deleted"`
-	Total         int                        `json:"total"`
-	KindBreakdown map[string]ChangeBreakdown `json:"kindBreakdown,omitempty"`
+	Added            int                        `json:"added"`
+	Modified         int                        `json:"modified"`
+	Deleted          int                        `json:"deleted"`
+	Total            int                        `json:"total"`
+	KindBreakdown    map[string]ChangeBreakdown `json:"kindBreakdown,omitempty"`
+	ClusterBreakdown map[string]ChangeBreakdown `json:"clusterBreakdown,omitempty"`
 }
 
 type HTMLReportPolicies struct {
@@ -49,6 +50,7 @@ type HTMLResourceChange struct {
 	Index        int           `json:"index"`
 	ID           string        `json:"id"`
 	Action       string        `json:"action"`
+	Cluster      string        `json:"cluster"`
 	APIVersion   string        `json:"apiVersion"`
 	Kind         string        `json:"kind"`
 	Namespace    string        `json:"namespace"`
@@ -79,11 +81,12 @@ func BuildHTMLReportData(req *Request, report *ActionReport, result *fmpdiff.Dif
 			DiffTruncated: report.DiffTruncated,
 		},
 		Summary: HTMLReportSummary{
-			Added:         report.ResourcesAdded,
-			Modified:      report.ResourcesModified,
-			Deleted:       report.ResourcesDeleted,
-			Total:         report.ResourcesTotal,
-			KindBreakdown: report.KindBreakdown,
+			Added:            report.ResourcesAdded,
+			Modified:         report.ResourcesModified,
+			Deleted:          report.ResourcesDeleted,
+			Total:            report.ResourcesTotal,
+			KindBreakdown:    report.KindBreakdown,
+			ClusterBreakdown: report.ByCluster,
 		},
 		Policies: HTMLReportPolicies{
 			Classifications: report.Classifications,
@@ -130,6 +133,7 @@ func htmlResourceChanges(changes []fmpdiff.ResourceChange, maxDiffBytes int) []H
 		out = append(out, HTMLResourceChange{
 			ID:           resourceIdentity(change.Producer, apiVersion, change.Kind, change.Namespace, change.Name),
 			Action:       change.Action,
+			Cluster:      change.Cluster,
 			APIVersion:   apiVersion,
 			Kind:         change.Kind,
 			Namespace:    change.Namespace,

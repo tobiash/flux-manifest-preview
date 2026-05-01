@@ -255,6 +255,99 @@ func TestLoadConfig_ParsesPolicies(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_ParsesClusters(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, ".fmp.yaml", `paths:
+  - kube:clusters/kube
+  - kube:clusters/shared
+  - prod:clusters/prod
+clusters:
+  edge:
+    - clusters/edge
+`)
+
+	cfg, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected config, got nil")
+	}
+
+	cp := cfg.ClusterPaths()
+	if cp == nil {
+		t.Fatal("expected ClusterPaths, got nil")
+	}
+	if len(cp["kube"]) != 2 {
+		t.Errorf("expected 2 paths for kube, got %d", len(cp["kube"]))
+	}
+	if len(cp["prod"]) != 1 {
+		t.Errorf("expected 1 path for prod, got %d", len(cp["prod"]))
+	}
+	if len(cp["edge"]) != 1 {
+		t.Errorf("expected 1 path for edge, got %d", len(cp["edge"]))
+	}
+}
+
+func TestLoadConfig_ClustersShorthand(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, ".fmp.yaml", `clusters:
+  kube: clusters/kube
+`)
+
+	cfg, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected config, got nil")
+	}
+
+	cp := cfg.ClusterPaths()
+	if cp == nil {
+		t.Fatal("expected ClusterPaths, got nil")
+	}
+	if len(cp["kube"]) != 1 || cp["kube"][0] != "clusters/kube" {
+		t.Errorf("expected clusters/kube for kube, got %v", cp["kube"])
+	}
+}
+
+func TestLoadConfig_FlatModeWhenNoPrefixes(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, ".fmp.yaml", `paths:
+  - clusters/kube
+  - clusters/prod
+`)
+
+	cfg, err := LoadConfig(dir)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if cfg.ClusterPaths() != nil {
+		t.Fatal("expected nil ClusterPaths for flat mode")
+	}
+}
+
+func TestParseClusterPath(t *testing.T) {
+	tests := []struct {
+		input       string
+		wantCluster string
+		wantPath    string
+	}{
+		{"kube:clusters/kube", "kube", "clusters/kube"},
+		{"clusters/kube", "", "clusters/kube"},
+		{":clusters/kube", "", ":clusters/kube"},
+		{"kube:", "kube", ""},
+	}
+	for _, tt := range tests {
+		gotCluster, gotPath := ParseClusterPath(tt.input)
+		if gotCluster != tt.wantCluster || gotPath != tt.wantPath {
+			t.Errorf("ParseClusterPath(%q) = (%q, %q), want (%q, %q)",
+				tt.input, gotCluster, gotPath, tt.wantCluster, tt.wantPath)
+		}
+	}
+}
+
 func writeFile(t *testing.T, dir, name, content string) {
 	t.Helper()
 	full := filepath.Join(dir, name)

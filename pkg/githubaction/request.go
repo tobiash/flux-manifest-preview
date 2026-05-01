@@ -19,6 +19,10 @@ type Request struct {
 	RepoB   string
 	Paths   []string
 
+	// Cluster mode: map of cluster name → list of paths.
+	// Derived from the "clusters" input and from prefixed "paths" entries.
+	ClusterPaths map[string][]string
+
 	// Render options
 	Recursive        bool
 	RenderHelm       bool
@@ -106,7 +110,46 @@ func ParseRequestFromEnv() (*Request, error) {
 		r.Paths = parseLines(getInput("kustomizations", ""))
 	}
 
+	// Parse clusters input and merge with prefixed paths.
+	r.ClusterPaths = r.buildClusterPaths()
+
 	return r, nil
+}
+
+// buildClusterPaths merges the explicit "clusters" input with any prefixed
+// entries found in Paths. It returns nil when no cluster mode is active.
+func (r *Request) buildClusterPaths() map[string][]string {
+	result := make(map[string][]string)
+
+	// Parse prefixed paths.
+	for _, p := range r.Paths {
+		cluster, path := config.ParseClusterPath(p)
+		if cluster != "" {
+			result[cluster] = append(result[cluster], path)
+		}
+	}
+
+	// Parse explicit clusters input: each line is "cluster:path".
+	for _, line := range parseLines(getInput("clusters", "")) {
+		cluster, path := config.ParseClusterPath(line)
+		if cluster != "" && path != "" {
+			result[cluster] = append(result[cluster], path)
+		}
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+
+	// Any unprefixed paths go into the empty cluster.
+	for _, p := range r.Paths {
+		cluster, path := config.ParseClusterPath(p)
+		if cluster == "" {
+			result[""] = append(result[""], path)
+		}
+	}
+
+	return result
 }
 
 // DiffLeft returns the base/left path or ref for diffing.

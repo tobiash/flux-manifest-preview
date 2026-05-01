@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 
+	"github.com/go-logr/logr"
 	"github.com/tobiash/flux-manifest-preview/pkg/render"
 	k8qdiff "github.com/tobiash/k8q/pkg/diff"
 	"sigs.k8s.io/kustomize/kyaml/resid"
@@ -28,6 +29,7 @@ type DiffResultJSON struct {
 // DiffChangeJSON represents a modified resource with before/after snapshots.
 type DiffChangeJSON struct {
 	ObjectRef   ObjectRef      `json:"objectRef"`
+	Cluster     string         `json:"cluster,omitempty"`
 	Producer    string         `json:"producer,omitempty"`
 	Old         map[string]any `json:"old"`
 	New         map[string]any `json:"new"`
@@ -36,6 +38,7 @@ type DiffChangeJSON struct {
 
 // ResourceChange describes a single resource change in a diff.
 type ResourceChange struct {
+	Cluster   string
 	ID        resid.ResId
 	Kind      string
 	Name      string
@@ -73,6 +76,21 @@ func (r *DiffResult) ByKind() map[string]int {
 	return m
 }
 
+// ByCluster returns counts grouped by cluster name.
+func (r *DiffResult) ByCluster() map[string]int {
+	m := make(map[string]int)
+	for _, c := range r.Added {
+		m[c.Cluster]++
+	}
+	for _, c := range r.Deleted {
+		m[c.Cluster]++
+	}
+	for _, c := range r.Modified {
+		m[c.Cluster]++
+	}
+	return m
+}
+
 // ToJSON converts the diff result to a JSON-serializable structure.
 func (r *DiffResult) ToJSON() *DiffResultJSON {
 	out := &DiffResultJSON{}
@@ -100,6 +118,7 @@ func (r *DiffResult) ToJSON() *DiffResultJSON {
 				Name:       c.Name,
 				Namespace:  c.Namespace,
 			},
+			Cluster:     c.Cluster,
 			Producer:    c.Producer,
 			Old:         c.Old,
 			New:         c.New,
@@ -208,6 +227,73 @@ func DiffWithResult(a, b *render.Render, w io.Writer) (*DiffResult, error) {
 		})
 		u := computeDiff(id.String(), aYaml, bYaml)
 		formatUnified(w, u)
+	}
+
+	return fmpResult, nil
+}
+
+// DiffWithResultClustered diffs two sets of renders keyed by cluster name.
+// Clusters present on both sides are diffed normally. Clusters only on the
+// left side produce all-deleted results; clusters only on the right produce
+// all-added results.
+func DiffWithResultClustered(left, right map[string]*render.Render, w io.Writer) (*DiffResult, error) {
+	fmpResult := &DiffResult{}
+
+	allClusters := make(map[string]bool)
+	for c := range left {
+		allClusters[c] = true
+	}
+	for c := range right {
+		allClusters[c] = true
+	}
+
+	for cluster := range allClusters {
+		lr, lok := left[cluster]
+		rr, rok := right[cluster]
+
+		if !lok {
+			// Cluster only on right → all added
+			result, err := DiffWithResult(render.NewDefaultRender(logr.Discard()), rr, w)
+			if err != nil {
+				return nil, err
+			}
+			for i := range result.Added {
+				result.Added[i].Cluster = cluster
+			}
+			fmpResult.Added = append(fmpResult.Added, result.Added...)
+			continue
+		}
+
+		if !rok {
+			// Cluster only on left → all deleted
+			result, err := DiffWithResult(lr, render.NewDefaultRender(logr.Discard()), w)
+			if err != nil {
+				return nil, err
+			}
+			for i := range result.Deleted {
+				result.Deleted[i].Cluster = cluster
+			}
+			fmpResult.Deleted = append(fmpResult.Deleted, result.Deleted...)
+			continue
+		}
+
+		// Cluster on both sides → normal diff
+		result, err := DiffWithResult(lr, rr, w)
+		if err != nil {
+			return nil, err
+		}
+		for i := range result.Added {
+			result.Added[i].Cluster = cluster
+		}
+		for i := range result.Deleted {
+			result.Deleted[i].Cluster = cluster
+		}
+		for i := range result.Modified {
+			result.Modified[i].Cluster = cluster
+		}
+		fmpResult.Added = append(fmpResult.Added, result.Added...)
+		fmpResult.Deleted = append(fmpResult.Deleted, result.Deleted...)
+		fmpResult.Modified = append(fmpResult.Modified, result.Modified...)
 	}
 
 	return fmpResult, nil

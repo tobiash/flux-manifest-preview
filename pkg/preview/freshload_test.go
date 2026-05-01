@@ -54,11 +54,12 @@ spec:
 		defer p.gitRepoExpander.Cleanup()
 	}
 
-	result, err := p.freshLoadRepo(context.Background(), mainRepo)
+	results, err := p.freshLoadRepo(context.Background(), mainRepo)
 	if err != nil {
 		t.Fatalf("freshLoadRepo() error = %v", err)
 	}
 
+	result := results[""]
 	yaml, err := result.render.AsYaml()
 	if err != nil {
 		t.Fatalf("AsYaml() error = %v", err)

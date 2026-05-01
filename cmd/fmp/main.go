@@ -466,9 +466,13 @@ func buildOptsWithFilters(log logr.Logger, configRepoPath string, applyFilters b
 	doExcludeCRDs := excludeCRDs
 	doSOPSDecrypt := sopsDecrypt
 
+	clusterPaths := make(map[string][]string)
 	if cfg != nil {
 		if len(paths) == 0 && len(cfg.Paths) > 0 {
 			paths = cfg.Paths
+		}
+		if cfg.ClusterPaths() != nil {
+			clusterPaths = cfg.ClusterPaths()
 		}
 		if !cmdChanged("recursive") {
 			doRecursive = config.BoolOr(cfg.Recursive, doRecursive)
@@ -503,7 +507,11 @@ func buildOptsWithFilters(log logr.Logger, configRepoPath string, applyFilters b
 
 	opts := []preview.Opt{
 		preview.WithLogger(log),
-		preview.WithPaths(paths, doRecursive),
+	}
+	if len(clusterPaths) > 0 {
+		opts = append(opts, preview.WithClusterPaths(clusterPaths))
+	} else {
+		opts = append(opts, preview.WithPaths(paths, doRecursive))
 	}
 
 	if doResolveGit {

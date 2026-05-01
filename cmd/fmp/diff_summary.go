@@ -142,6 +142,33 @@ func buildKindBreakdown(result *diff.DiffResult) map[string]githubaction.ChangeB
 	return breakdown
 }
 
+func buildClusterBreakdown(result *diff.DiffResult) map[string]githubaction.ChangeBreakdown {
+	breakdown := make(map[string]githubaction.ChangeBreakdown)
+
+	for _, change := range result.Added {
+		entry := breakdown[change.Cluster]
+		entry.Added++
+		entry.Total++
+		breakdown[change.Cluster] = entry
+	}
+
+	for _, change := range result.Modified {
+		entry := breakdown[change.Cluster]
+		entry.Modified++
+		entry.Total++
+		breakdown[change.Cluster] = entry
+	}
+
+	for _, change := range result.Deleted {
+		entry := breakdown[change.Cluster]
+		entry.Deleted++
+		entry.Total++
+		breakdown[change.Cluster] = entry
+	}
+
+	return breakdown
+}
+
 func sortedKindBreakdownRows(m map[string]githubaction.ChangeBreakdown) []kindBreakdownRow {
 	if len(m) == 0 {
 		return nil

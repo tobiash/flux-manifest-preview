@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/tobiash/flux-manifest-preview/pkg/filter"
 	"gopkg.in/yaml.v3"
@@ -16,17 +17,40 @@ var searchPaths = []string{
 }
 
 type Config struct {
-	Paths        []string            `yaml:"paths,omitempty"`
-	Recursive    *bool               `yaml:"recursive,omitempty"`
-	Helm         *bool               `yaml:"helm,omitempty"`
-	ResolveGit   *bool               `yaml:"resolve-git,omitempty"`
-	SOPSDecrypt  *bool               `yaml:"sops-decrypt,omitempty"`
-	Sort         *bool               `yaml:"sort,omitempty"`
-	ExcludeCRDs  *bool               `yaml:"exclude-crds,omitempty"`
-	Filters      filter.FilterConfig `yaml:",inline"`
-	HelmSettings *HelmSettings       `yaml:"helm-settings,omitempty"`
-	Policies     *PolicyConfig       `yaml:"policies,omitempty"`
-	SourcePath   string              `yaml:"-"`
+	Paths        []string                 `yaml:"paths,omitempty"`
+	Clusters     map[string]ClusterConfig `yaml:"clusters,omitempty"`
+	Recursive    *bool                    `yaml:"recursive,omitempty"`
+	Helm         *bool                    `yaml:"helm,omitempty"`
+	ResolveGit   *bool                    `yaml:"resolve-git,omitempty"`
+	SOPSDecrypt  *bool                    `yaml:"sops-decrypt,omitempty"`
+	Sort         *bool                    `yaml:"sort,omitempty"`
+	ExcludeCRDs  *bool                    `yaml:"exclude-crds,omitempty"`
+	Filters      filter.FilterConfig      `yaml:",inline"`
+	HelmSettings *HelmSettings            `yaml:"helm-settings,omitempty"`
+	Policies     *PolicyConfig            `yaml:"policies,omitempty"`
+	SourcePath   string                   `yaml:"-"`
+}
+
+// ClusterConfig holds one or more paths for a named cluster.
+type ClusterConfig struct {
+	Paths []string
+}
+
+// UnmarshalYAML supports both a single string and a list of strings.
+func (c *ClusterConfig) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		var path string
+		if err := node.Decode(&path); err != nil {
+			return err
+		}
+		c.Paths = []string{path}
+		return nil
+	case yaml.SequenceNode:
+		return node.Decode(&c.Paths)
+	default:
+		return fmt.Errorf("cluster config must be a string or list of strings")
+	}
 }
 
 type HelmSettings struct {
@@ -127,4 +151,50 @@ func BoolOr(ptr *bool, def bool) bool {
 		return def
 	}
 	return *ptr
+}
+
+// ParseClusterPath splits a path string into cluster and path components.
+// If the string contains a colon, the part before the first colon is the cluster
+// and the part after is the path. Otherwise cluster is empty.
+func ParseClusterPath(s string) (cluster, path string) {
+	if i := strings.Index(s, ":"); i > 0 {
+		return s[:i], s[i+1:]
+	}
+	return "", s
+}
+
+// ClusterPaths normalizes both prefixed Paths and the Clusters map into a
+// map of cluster name → list of paths.
+//
+// If no prefixes are present in Paths and Clusters is empty, it returns nil
+// to signal flat (non-clustered) mode.
+func (cfg *Config) ClusterPaths() map[string][]string {
+	if cfg == nil {
+		return nil
+	}
+
+	hasPrefix := false
+	for _, p := range cfg.Paths {
+		if c, _ := ParseClusterPath(p); c != "" {
+			hasPrefix = true
+			break
+		}
+	}
+
+	if !hasPrefix && len(cfg.Clusters) == 0 {
+		return nil
+	}
+
+	result := make(map[string][]string)
+
+	for _, p := range cfg.Paths {
+		cluster, path := ParseClusterPath(p)
+		result[cluster] = append(result[cluster], path)
+	}
+
+	for cluster, cc := range cfg.Clusters {
+		result[cluster] = append(result[cluster], cc.Paths...)
+	}
+
+	return result
 }

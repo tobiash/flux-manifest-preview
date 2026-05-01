@@ -109,6 +109,9 @@ a.metric:hover { background: var(--panel-soft); }
 
 .cards { display: grid; gap: 10px; }
 .kind-grid { display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.cluster-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+a.cluster-card { color: inherit; text-decoration: none; }
+a.cluster-card:hover { border-color: var(--primary); box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
 .card, .resource-card, .filterbar, .detail-panel {
   background: var(--panel);
   border: 1px solid var(--border);

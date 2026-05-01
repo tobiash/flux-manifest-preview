@@ -37,6 +37,48 @@ func TestParseRequestFromEnvSupportsMultiplePaths(t *testing.T) {
 	}
 }
 
+func TestParseRequestFromEnvSupportsClusterPrefixes(t *testing.T) {
+	t.Setenv("INPUT_PATHS", "kube:clusters/kube\nkube:clusters/shared\nprod:clusters/prod")
+
+	req, err := ParseRequestFromEnv()
+	if err != nil {
+		t.Fatalf("ParseRequestFromEnv() error = %v", err)
+	}
+
+	if req.ClusterPaths == nil {
+		t.Fatal("expected ClusterPaths, got nil")
+	}
+	if len(req.ClusterPaths["kube"]) != 2 {
+		t.Fatalf("len(kube) = %d, want 2", len(req.ClusterPaths["kube"]))
+	}
+	if len(req.ClusterPaths["prod"]) != 1 {
+		t.Fatalf("len(prod) = %d, want 1", len(req.ClusterPaths["prod"]))
+	}
+}
+
+func TestParseRequestFromEnvSupportsClustersInput(t *testing.T) {
+	t.Setenv("INPUT_PATHS", "clusters/kube")
+	t.Setenv("INPUT_CLUSTERS", "prod:clusters/prod\nedge:clusters/edge")
+
+	req, err := ParseRequestFromEnv()
+	if err != nil {
+		t.Fatalf("ParseRequestFromEnv() error = %v", err)
+	}
+
+	if req.ClusterPaths == nil {
+		t.Fatal("expected ClusterPaths, got nil")
+	}
+	if len(req.ClusterPaths[""]) != 1 || req.ClusterPaths[""][0] != "clusters/kube" {
+		t.Fatalf("default cluster = %v, want [clusters/kube]", req.ClusterPaths[""])
+	}
+	if len(req.ClusterPaths["prod"]) != 1 {
+		t.Fatalf("len(prod) = %d, want 1", len(req.ClusterPaths["prod"]))
+	}
+	if len(req.ClusterPaths["edge"]) != 1 {
+		t.Fatalf("len(edge) = %d, want 1", len(req.ClusterPaths["edge"]))
+	}
+}
+
 func TestParseRequestFromEnvSupportsHTMLReportInputs(t *testing.T) {
 	t.Setenv("INPUT_HTML_REPORT", "true")
 	t.Setenv("INPUT_HTML_REPORT_NAME", "custom-report")

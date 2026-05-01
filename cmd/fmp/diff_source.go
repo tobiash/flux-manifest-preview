@@ -310,6 +310,7 @@ func buildActionReport(result *diff.DiffResult, policyResult *policy.Result, ful
 		ResourcesTotal:    result.TotalChanged(),
 		ByKind:            result.ByKind(),
 		KindBreakdown:     buildKindBreakdown(result),
+		ByCluster:         buildClusterBreakdown(result),
 	}
 	if policyResult != nil {
 		report.Classifications = policyResult.Classifications

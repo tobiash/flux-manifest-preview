@@ -40,6 +40,7 @@ type ActionReport struct {
 	ByKind        map[string]int             `json:"by_kind,omitempty"`
 	KindBreakdown map[string]ChangeBreakdown `json:"kind_breakdown,omitempty"`
 	ByProducer    map[string]int             `json:"by_producer,omitempty"`
+	ByCluster     map[string]ChangeBreakdown `json:"by_cluster,omitempty"`
 
 	Classifications []policy.Classification `json:"classifications,omitempty"`
 	Violations      []policy.Violation      `json:"violations,omitempty"`

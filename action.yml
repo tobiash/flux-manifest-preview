@@ -19,7 +19,11 @@ inputs:
     required: false
     default: ''
   paths:
-    description: 'Kustomize bases or directories to render (newline-separated, relative to repo root)'
+    description: 'Kustomize bases or directories to render (newline-separated, relative to repo root). Supports cluster:path prefixes for multi-cluster mode.'
+    required: false
+    default: ''
+  clusters:
+    description: 'Explicit cluster mappings (newline-separated, format: cluster:path). Merged with prefixed paths entries.'
     required: false
     default: ''
   recursive:

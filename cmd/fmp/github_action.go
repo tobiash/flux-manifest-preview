@@ -214,6 +214,7 @@ func executeAction(log logr.Logger, req *githubaction.Request) (*githubaction.Ac
 		ResourcesTotal:    result.TotalChanged(),
 		ByKind:            result.ByKind(),
 		KindBreakdown:     buildKindBreakdown(result),
+		ByCluster:         buildClusterBreakdown(result),
 	}
 
 	if cfg != nil {
@@ -253,7 +254,11 @@ func buildActionOpts(log logr.Logger, req *githubaction.Request, cfg *config.Con
 	renderHelm := req.RenderHelm
 	sort := req.Sort
 	excludeCRDs := req.ExcludeCRDs
+	clusterPaths := req.ClusterPaths
 	if cfg != nil {
+		if len(paths) == 0 && len(clusterPaths) == 0 && cfg.ClusterPaths() != nil {
+			clusterPaths = cfg.ClusterPaths()
+		}
 		if !recursive && cfg.Recursive != nil {
 			recursive = *cfg.Recursive
 		}
@@ -270,7 +275,11 @@ func buildActionOpts(log logr.Logger, req *githubaction.Request, cfg *config.Con
 
 	opts := []preview.Opt{
 		preview.WithLogger(log),
-		preview.WithPaths(paths, recursive),
+	}
+	if len(clusterPaths) > 0 {
+		opts = append(opts, preview.WithClusterPaths(clusterPaths))
+	} else {
+		opts = append(opts, preview.WithPaths(paths, recursive))
 	}
 
 	if req.ResolveGit {

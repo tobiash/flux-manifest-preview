@@ -52,6 +52,7 @@
       summaryGrid(),
       actionLinks()
     )
+    renderClusterSection()
     renderKindSection()
     renderPolicySection()
     renderTopChanges()
@@ -83,6 +84,24 @@
       el('a', {class: 'button', href: '#resources', text: 'Open Resource Browser'}),
       el('a', {class: 'button secondary', href: '#overview', text: `${data.resources.length} resources indexed`})
     ])
+  }
+
+  function renderClusterSection() {
+    const rows = Object.entries(data.summary.clusterBreakdown || {}).sort((a, b) => b[1].total - a[1].total || a[0].localeCompare(b[0]))
+    if (rows.length === 0) return
+    // Only show cluster breakdown in multi-cluster mode: either >1 cluster, or a single explicitly-named cluster.
+    if (rows.length === 1 && !rows[0][0]) return
+    app.append(el('h2', {text: 'Clusters'}))
+    const grid = el('div', {class: 'cluster-grid'})
+    for (const [cluster, row] of rows) {
+      const clusterLabel = cluster || '(default)'
+      const href = `#resources?cluster=${encodeURIComponent(cluster || 'default')}`
+      grid.append(el('a', {class: 'card cluster-card', href}, [
+        el('div', {class: 'card-title'}, [el('strong', {text: clusterLabel}), el('span', {class: 'pill', text: String(row.total)})]),
+        el('small', {text: `${row.added} added · ${row.modified} modified · ${row.deleted} deleted`})
+      ]))
+    }
+    app.append(grid)
   }
 
   function renderKindSection() {
@@ -123,6 +142,8 @@
     if (params) {
       const action = params.get('action')
       if (action) filters.action = action
+      const cluster = params.get('cluster')
+      if (cluster) filters.cluster = cluster
     }
     app.replaceChildren()
     app.append(el('div', {class: 'eyebrow', text: 'Resource Browser'}), el('h1', {text: 'Changed Resources'}), filterBar())
@@ -145,7 +166,7 @@
     const bar = el('div', {class: 'filterbar'})
     const search = el('input', {placeholder: 'Search name, namespace, kind, producer', value: filters.query})
     search.addEventListener('input', () => { filters.query = search.value; renderFilteredList() })
-    bar.append(search, select('action', [''].concat(unique(data.resources.map(r => r.action)))), select('kind', [''].concat(unique(data.resources.map(r => r.kind)))), select('namespace', [''].concat(unique(data.resources.map(r => r.namespace || 'cluster-scoped')))), select('producer', [''].concat(unique(data.resources.map(r => r.producer || 'unknown')))), el('span', {class: 'filter-count', text: `${filteredResources().length} of ${data.resources.length} resources`}))
+    bar.append(search, select('action', [''].concat(unique(data.resources.map(r => r.action)))), select('kind', [''].concat(unique(data.resources.map(r => r.kind)))), select('namespace', [''].concat(unique(data.resources.map(r => r.namespace || 'cluster-scoped')))), select('cluster', [''].concat(unique(data.resources.map(r => r.cluster || 'default')))), select('producer', [''].concat(unique(data.resources.map(r => r.producer || 'unknown')))), el('span', {class: 'filter-count', text: `${filteredResources().length} of ${data.resources.length} resources`}))
     return bar
   }
 
@@ -163,11 +184,12 @@
 
   function filteredResources() {
     return data.resources.filter(r => {
-      const haystack = `${r.name} ${r.namespace || 'cluster-scoped'} ${r.kind} ${r.producer || ''}`.toLowerCase()
+      const haystack = `${r.name} ${r.namespace || 'cluster-scoped'} ${r.kind} ${r.cluster || 'default'} ${r.producer || ''}`.toLowerCase()
       return (!filters.query || haystack.includes(filters.query)) &&
         (!filters.action || r.action === filters.action) &&
         (!filters.kind || r.kind === filters.kind) &&
         (!filters.namespace || (r.namespace || 'cluster-scoped') === filters.namespace) &&
+        (!filters.cluster || (r.cluster || 'default') === filters.cluster) &&
         (!filters.producer || (r.producer || 'unknown') === filters.producer)
     })
   }
@@ -236,7 +258,7 @@
     app.append(
       el('div', {class: 'breadcrumb'}, [el('a', {href: '#resources', text: 'Resources'}), document.createTextNode(` / ${res.kind} / ${res.name}`)]),
       el('section', {class: 'detail-header'}, [
-        el('div', {}, [el('div', {class: 'eyebrow', text: res.action}), el('h1', {text: `${res.kind} ${res.name}`}), el('p', {text: `${res.namespace || 'cluster-scoped'} · ${res.apiVersion} · Producer: ${res.producer || 'unknown'}`})]),
+        el('div', {}, [el('div', {class: 'eyebrow', text: res.action}), el('h1', {text: `${res.kind} ${res.name}`}), el('p', {text: `${res.namespace || 'cluster-scoped'} · ${res.cluster || 'default'} · ${res.apiVersion} · Producer: ${res.producer || 'unknown'}`})]),
         el('div', {class: 'detail-actions'}, [diffToggle(index, view), copyButton(res)])
       ]),
       diffStats(res),

@@ -28,6 +28,7 @@ func RenderSummaryMarkdown(req *Request, report *ActionReport) string {
 	b.WriteString(renderChangeSummary(report))
 	b.WriteString("\n")
 	writeKindBreakdown(&b, report)
+	writeClusterBreakdown(&b, report)
 	writePolicySections(&b, report)
 
 	if len(report.Warnings) > 0 {
@@ -92,6 +93,7 @@ func RenderCommentMarkdown(req *Request, report *ActionReport) string {
 	b.WriteString(renderChangeSummary(report))
 	b.WriteString("\n")
 	writeKindBreakdown(&b, report)
+	writeClusterBreakdown(&b, report)
 	writePolicySections(&b, report)
 
 	if len(report.Warnings) > 0 {
@@ -171,6 +173,33 @@ func writeKindBreakdown(b *strings.Builder, report *ActionReport) {
 	b.WriteString("\n</details>\n\n")
 }
 
+func writeClusterBreakdown(b *strings.Builder, report *ActionReport) {
+	rows := sortedClusterBreakdown(report.ByCluster)
+	if len(rows) == 0 {
+		return
+	}
+
+	_, _ = fmt.Fprintf(b, "<details>\n<summary>Changed resources by cluster (%d clusters)</summary>\n\n", len(rows))
+	b.WriteString("| Cluster | Added | Modified | Deleted | Total |\n")
+	b.WriteString("| :--- | ---: | ---: | ---: | ---: |\n")
+	for _, row := range rows {
+		cluster := row.Cluster
+		if cluster == "" {
+			cluster = "(default)"
+		}
+		_, _ = fmt.Fprintf(
+			b,
+			"| %s | %d | %d | %d | %d |\n",
+			cluster,
+			row.Breakdown.Added,
+			row.Breakdown.Modified,
+			row.Breakdown.Deleted,
+			row.Breakdown.Total,
+		)
+	}
+	b.WriteString("\n</details>\n\n")
+}
+
 func writePolicySections(b *strings.Builder, report *ActionReport) {
 	if len(report.Classifications) > 0 {
 		b.WriteString("**Classifications:**\n")
@@ -232,6 +261,31 @@ func sortedKindBreakdown(m map[string]ChangeBreakdown) []kindBreakdownRow {
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].Breakdown.Total == rows[j].Breakdown.Total {
 			return rows[i].Kind < rows[j].Kind
+		}
+		return rows[i].Breakdown.Total > rows[j].Breakdown.Total
+	})
+
+	return rows
+}
+
+type clusterBreakdownRow struct {
+	Cluster   string
+	Breakdown ChangeBreakdown
+}
+
+func sortedClusterBreakdown(m map[string]ChangeBreakdown) []clusterBreakdownRow {
+	if len(m) == 0 {
+		return nil
+	}
+
+	rows := make([]clusterBreakdownRow, 0, len(m))
+	for cluster, breakdown := range m {
+		rows = append(rows, clusterBreakdownRow{Cluster: cluster, Breakdown: breakdown})
+	}
+
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Breakdown.Total == rows[j].Breakdown.Total {
+			return rows[i].Cluster < rows[j].Cluster
 		}
 		return rows[i].Breakdown.Total > rows[j].Breakdown.Total
 	})

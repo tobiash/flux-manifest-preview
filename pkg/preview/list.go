@@ -60,20 +60,28 @@ type HelmReleaseInfo struct {
 
 // ListKustomizations discovers and lists Flux Kustomizations from the repo at path.
 func (p *Preview) ListKustomizations(ctx context.Context, path string) ([]KustomizationInfo, error) {
-	r, err := p.loadRepo(ctx, path)
+	results, err := p.loadRepo(ctx, path)
 	if err != nil {
 		return nil, err
 	}
-	return extractKustomizations(r.render), nil
+	var all []KustomizationInfo
+	for _, r := range results {
+		all = append(all, extractKustomizations(r.render)...)
+	}
+	return all, nil
 }
 
 // ListHelmReleases discovers and lists HelmReleases from the repo at path.
 func (p *Preview) ListHelmReleases(ctx context.Context, path string) ([]HelmReleaseInfo, error) {
-	r, err := p.loadRepo(ctx, path)
+	results, err := p.loadRepo(ctx, path)
 	if err != nil {
 		return nil, err
 	}
-	return extractHelmReleases(r.render), nil
+	var all []HelmReleaseInfo
+	for _, r := range results {
+		all = append(all, extractHelmReleases(r.render)...)
+	}
+	return all, nil
 }
 
 func extractKustomizations(r *render.Render) []KustomizationInfo {

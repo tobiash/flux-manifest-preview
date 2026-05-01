@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: podinfo-config
+  namespace: default
+data:
+  color: blue
+  message: hello-staging
+  replicas: "1"

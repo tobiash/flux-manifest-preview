@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: podinfo-config
+  namespace: default
+data:
+  color: green
+  message: hello-production
+  replicas: "5"
