@@ -15,6 +15,7 @@
 
 - **🚢 GitOps Awareness**: Discover and follow Flux `Kustomization.spec.path` and resolve external `GitRepository` sources.
 - **📦 Helm Integration**: Render `HelmRelease` resources through the Helm SDK, including support for post-renderers and `commonMetadata`.
+- **🗺️ Multi-Cluster**: Render and diff multiple clusters independently with per-cluster breakdowns in reports.
 - **🔍 Intelligent Diffing**: Compare local worktree changes against `HEAD` or other revisions with noisy field normalization.
 - **🔐 Secret Support**: Decrypt SOPS-encrypted resources on the fly when requested.
 - **🧹 Clean Output**: Filter generated fields (like timestamps or random hashes) for deterministic and readable diffs.
@@ -70,6 +71,8 @@ fmp diff main feature-branch  # Diff two branches
 fmp diff ./before ./after     # Diff two local paths
 fmp diff git:HEAD path:/tmp   # Mix git refs and local paths
 ```
+
+With multi-cluster paths configured in `.fmp.yaml`, `fmp diff` renders each cluster independently and shows a per-cluster breakdown.
 
 ### 📄 Rendering Manifests
 
@@ -165,6 +168,28 @@ helm: true
 resolve-git: true
 sort: true
 exclude-crds: true
+
+### Multi-Cluster Repositories
+
+For repositories that manage multiple clusters, use `cluster:path` prefixes in `paths` or the `clusters` map:
+
+```yaml
+paths:
+  - staging:clusters/staging/flux-system
+  - production:clusters/production/flux-system
+```
+
+Or using the `clusters` map:
+
+```yaml
+clusters:
+  staging:
+    - clusters/staging/flux-system
+  production:
+    - clusters/production/flux-system
+```
+
+When clusters are configured, `fmp diff` renders each cluster independently and produces a per-cluster breakdown in reports. The HTML report shows a "Clusters" section on the overview page with a card per cluster that links to a filtered resource browser.
 filters:
   - kind: FieldNormalizer
     match:
@@ -392,7 +417,7 @@ Use `fmp` in your CI/CD pipelines to review PRs automatically.
     html-report: true
 ```
 
-The HTML report opens with a long-form impact overview, then provides a resource browser with kind, namespace, producer, action, and search filters. Each resource opens a detailed diff view with unified and side-by-side modes.
+The HTML report opens with a long-form impact overview including a cluster breakdown when multi-cluster mode is active, then provides a resource browser with kind, namespace, cluster, producer, action, and search filters. Each resource opens a detailed diff view with unified and side-by-side modes.
 
 **Deploy to GitHub Pages (public repos or paid private repos):**
 ```yaml
@@ -426,10 +451,11 @@ This deploys the report to the `gh-pages` branch and outputs a direct browser li
     repo: .
     base-ref: origin/main
     paths: |
-      clusters/kube
-      clusters/prod
-      clusters/edge
+      staging:clusters/staging/flux-system
+      production:clusters/production/flux-system
 ```
+
+Or use a `.fmp.yaml` with `clusters` or `paths` prefixes and let the action auto-discover it.
 
 **Note:** `sops-decrypt` is intentionally unsupported in the GitHub Action to avoid leaking decrypted content into logs, summaries, comments, or artifacts.
 
@@ -438,6 +464,33 @@ For local action development or branch testing, build `fmp` ahead of time and pa
 `paths` and legacy `kustomizations` inputs are newline-separated, so pointing the action at one subdirectory per cluster is already supported.
 
 If you want `fmp` to apply pull request labels directly in GitHub Actions, grant `issues: write` in addition to `pull-requests: write`.
+
+---
+
+## 🪝 Pre-Commit Hook (lefthook)
+
+You can run `fmp` policy checks locally before each commit using [lefthook](https://github.com/evilmartians/lefthook).
+
+Add this command to your `lefthook.yml`:
+
+```yaml
+pre-commit:
+  commands:
+    fmp-policy:
+      run: |
+        if [ ! -f .fmp.yaml ] || ! grep -q "policies:" .fmp.yaml; then
+          exit 0
+        fi
+        if ! command -v fmp >/dev/null 2>&1; then
+          echo "warning: fmp not found in PATH, skipping policy check" >&2
+          exit 0
+        fi
+        head_tree=$(git rev-parse HEAD^{tree})
+        staged_tree=$(git write-tree)
+        fmp diff "git:${head_tree}" "git:${staged_tree}" --summary-only
+```
+
+This compares `HEAD` against the staged index so only changes about to be committed are evaluated. The commit is blocked if any `fail-on` policy matches.
 
 ---
 
