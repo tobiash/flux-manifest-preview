@@ -18,6 +18,20 @@ pre-commit:
       glob: "*.go"
       run: golangci-lint run --new-from-rev HEAD --fix ./...
       stage_fixed: true
+    fmp-policy:
+      # Run fmp policy checks when .fmp.yaml has policies configured.
+      # Compares HEAD against the staged index so only staged changes are evaluated.
+      run: |
+        if [ ! -f .fmp.yaml ] || ! grep -q "policies:" .fmp.yaml; then
+          exit 0
+        fi
+        if ! command -v fmp >/dev/null 2>&1; then
+          echo "warning: fmp not found in PATH, skipping policy check" >&2
+          exit 0
+        fi
+        head_tree=$(git rev-parse HEAD^{tree})
+        staged_tree=$(git write-tree)
+        fmp diff "git:${head_tree}" "git:${staged_tree}" --summary-only
 
 pre-push:
   commands:
