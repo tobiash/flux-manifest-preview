@@ -51,6 +51,8 @@ Enable `html-report` in the GitHub Action to generate a browsable report artifac
 | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | [![HTML report overview](docs/assets/fmp-report-overview.png)](docs/assets/fmp-report-overview.png) | [![Unified diff view](docs/assets/fmp-report-unified-diff.png)](docs/assets/fmp-report-unified-diff.png) | [![Side-by-side diff view](docs/assets/fmp-report-side-by-side-diff.png)](docs/assets/fmp-report-side-by-side-diff.png) |
 
+Open the checked-in [sample HTML report](docs/examples/fmp-report-example.html) to try the single-file report locally.
+
 The report includes:
 
 - long-form impact summary

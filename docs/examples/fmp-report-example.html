@@ -1,0 +1,548 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flux Manifest Preview Report</title>
+  <style>:root {
+  --primary: #1773cf;
+  --surface: #f9fafb;
+  --panel: #ffffff;
+  --panel-soft: #f3f6fa;
+  --border: #e5e7eb;
+  --text: #1a1a1a;
+  --muted: #6b7280;
+  --faint: #9ca3af;
+  --added: #0e795b;
+  --added-bg: #e6f4f1;
+  --deleted: #d13415;
+  --deleted-bg: #fce9e6;
+  --modified: #9a5b00;
+  --modified-bg: #fff4df;
+  --hunk-bg: #f2f7fd;
+  --cell-border: #f0f1f3;
+  --empty-a: #fafafa;
+  --empty-b: #f2f2f2;
+  --input-bg: #ffffff;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --primary: #5ba8e8;
+    --surface: #0f1117;
+    --panel: #1a1d27;
+    --panel-soft: #222633;
+    --border: #2d3140;
+    --text: #e0e2e8;
+    --muted: #8b8fa4;
+    --faint: #5c6070;
+    --added: #3ec997;
+    --added-bg: #132b24;
+    --deleted: #f47067;
+    --deleted-bg: #2d1519;
+    --modified: #e0a94e;
+    --modified-bg: #2d2513;
+    --hunk-bg: #172240;
+    --cell-border: #262a38;
+    --empty-a: #1a1d27;
+    --empty-b: #222633;
+    --input-bg: #1a1d27;
+  }
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.topbar {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.88);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  height: 48px;
+  justify-content: space-between;
+  padding: 0 24px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  backdrop-filter: blur(12px);
+}
+@media (prefers-color-scheme: dark) {
+  .topbar { background: rgba(15, 17, 23, 0.88); }
+}
+.brand { color: var(--text); font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-decoration: none; text-transform: uppercase; transition: color 0.2s; }
+.brand:hover { color: var(--primary); }
+.topbar nav { display: flex; gap: 18px; }
+.topbar a { color: var(--muted); font-size: 12px; text-decoration: none; transition: color 0.2s; }
+.topbar a.active { color: var(--primary); font-weight: 700; }
+
+.filter-count { align-items: center; color: var(--faint); display: flex; font-size: 12px; white-space: nowrap; }
+
+.app { max-width: 880px; margin: 0 auto; padding: 56px 24px 88px; outline: none; }
+.app > * { animation: fadeUp 0.25s ease both; }
+.app > *:nth-child(2) { animation-delay: 0.04s; }
+.app > *:nth-child(3) { animation-delay: 0.08s; }
+.app > *:nth-child(4) { animation-delay: 0.12s; }
+.app > *:nth-child(5) { animation-delay: 0.16s; }
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.eyebrow { color: var(--faint); font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+h1 { font-size: 32px; letter-spacing: -0.04em; line-height: 1.1; margin: 6px 0 10px; }
+h2 { font-size: 18px; letter-spacing: -0.02em; margin: 38px 0 14px; }
+p { color: var(--muted); line-height: 1.6; margin: 0; }
+
+.meta { color: var(--muted); display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; }
+.summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 28px; border: 1px solid var(--border); background: var(--panel); }
+.metric { padding: 18px 20px; border-right: 1px solid var(--border); }
+.metric:last-child { border-right: 0; }
+.metric-value { display: block; font-size: 24px; font-weight: 800; letter-spacing: -0.04em; }
+.metric-label { color: var(--muted); display: block; font-size: 12px; margin-top: 4px; }
+.metric.added .metric-value { color: var(--primary); }
+.metric.modified .metric-value { color: var(--modified); }
+.metric.deleted .metric-value { color: var(--deleted); }
+a.metric { color: inherit; text-decoration: none; transition: background 0.15s; }
+a.metric:hover { background: var(--panel-soft); }
+
+.cards { display: grid; gap: 10px; }
+.kind-grid { display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.cluster-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+a.cluster-card { color: inherit; text-decoration: none; }
+a.cluster-card:hover { border-color: var(--primary); box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+.card, .resource-card, .filterbar, .detail-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  padding: 14px 16px;
+}
+.card { transition: border-color 0.2s, box-shadow 0.2s; }
+.card-title, .resource-title { align-items: center; display: flex; gap: 8px; justify-content: space-between; }
+.card-title strong, .resource-title strong { font-size: 13px; }
+.card small, .resource-meta { color: var(--muted); font-size: 12px; }
+.pill { background: var(--panel-soft); color: var(--muted); display: inline-flex; font-size: 11px; font-weight: 700; gap: 4px; padding: 3px 7px; text-transform: uppercase; }
+.pill.added { background: var(--added-bg); color: var(--added); }
+.pill.modified { background: var(--modified-bg); color: var(--modified); }
+.pill.deleted { background: var(--deleted-bg); color: var(--deleted); }
+.pill.error { background: var(--deleted-bg); color: var(--deleted); }
+
+.overview-actions { display: flex; gap: 10px; margin-top: 24px; }
+.button { background: var(--primary); color: #fff; display: inline-flex; font-size: 12px; font-weight: 700; padding: 9px 12px; text-decoration: none; }
+.button.secondary { background: var(--panel-soft); color: var(--text); }
+
+.filterbar { display: grid; gap: 10px; grid-template-columns: 1.4fr repeat(4, minmax(120px, 1fr)) auto; align-items: center; margin: 22px 0; position: sticky; top: 58px; z-index: 5; }
+input, select { background: var(--input-bg); border: 1px solid var(--border); color: var(--text); font: inherit; min-width: 0; padding: 8px 10px; }
+.resource-list { display: grid; gap: 8px; }
+.resource-list > .resource-card { animation: fadeUp 0.2s ease both; }
+.resource-list > .resource-card:nth-child(1) { animation-delay: 0s; }
+.resource-list > .resource-card:nth-child(2) { animation-delay: 0.03s; }
+.resource-list > .resource-card:nth-child(3) { animation-delay: 0.06s; }
+.resource-list > .resource-card:nth-child(4) { animation-delay: 0.09s; }
+.resource-list > .resource-card:nth-child(5) { animation-delay: 0.12s; }
+.resource-list > .resource-card:nth-child(6) { animation-delay: 0.15s; }
+.resource-list > .resource-card:nth-child(7) { animation-delay: 0.18s; }
+.resource-list > .resource-card:nth-child(8) { animation-delay: 0.21s; }
+.resource-list > .resource-card:nth-child(n+9) { animation-delay: 0.24s; }
+.resource-card { color: inherit; display: block; text-decoration: none; outline: none; transition: border-color 0.2s, box-shadow 0.2s, transform 0.15s; }
+.resource-card:hover, .resource-card:focus-visible { border-color: var(--primary); transform: translateY(-1px); }
+.resource-card:focus-visible { box-shadow: 0 0 0 2px var(--primary); }
+.resource-foot { align-items: center; color: var(--muted); display: flex; gap: 12px; margin-top: 10px; font-size: 12px; }
+
+.sparkline { background: var(--border); border-radius: 2px; flex: 1; height: 6px; overflow: hidden; position: relative; }
+.sparkline-bar { height: 100%; position: absolute; top: 0; transition: width 0.3s ease; }
+.sparkline-bar.added { background: var(--added); left: 0; }
+.sparkline-bar.deleted { background: var(--deleted); }
+
+.breadcrumb { color: var(--muted); font-size: 12px; margin-bottom: 24px; }
+.breadcrumb a { color: var(--primary); text-decoration: none; }
+.detail-header { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+.detail-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+.toggle { display: inline-flex; border: 1px solid var(--border); background: var(--panel); }
+.toggle button { background: transparent; border: 0; color: var(--muted); cursor: pointer; font: inherit; font-size: 12px; padding: 7px 10px; transition: background 0.2s, color 0.2s; }
+.toggle button.active { background: #111; color: #fff; }
+@media (prefers-color-scheme: dark) { .toggle button.active { background: #e0e2e8; color: #111; } }
+.detail-panel { margin-top: 18px; }
+
+.diff-stats { background: var(--panel-soft); border: 1px solid var(--border); border-bottom: 0; display: flex; gap: 16px; font-family: var(--mono); font-size: 12px; padding: 8px 12px; }
+.diff-stats .added { color: var(--added); }
+.diff-stats .deleted { color: var(--deleted); }
+.diff-stats .context { color: var(--muted); }
+
+.copy-btn { background: var(--panel-soft); border: 1px solid var(--border); color: var(--muted); cursor: pointer; font: inherit; font-size: 11px; font-weight: 700; padding: 5px 8px; text-transform: uppercase; transition: color 0.2s, border-color 0.2s, background 0.2s; }
+.copy-btn:hover { color: var(--text); border-color: var(--primary); }
+.copy-btn.copied { color: var(--added); border-color: var(--added); background: var(--added-bg); }
+
+.diff { background: var(--panel); border: 1px solid var(--border); font-family: var(--mono); font-size: 12px; overflow: auto; }
+.diff-row { display: grid; min-width: 760px; }
+.diff.unified .diff-row { grid-template-columns: 56px 1fr; }
+.diff.split .diff-row { grid-template-columns: 56px 1fr 56px 1fr; }
+.cell { border-bottom: 1px solid var(--cell-border); min-height: 24px; padding: 4px 8px; white-space: pre; }
+.line-no { color: var(--faint); text-align: right; user-select: none; }
+.diff-row.added .cell { background: var(--added-bg); }
+.diff-row.deleted .cell { background: var(--deleted-bg); }
+.diff-row.hunk .cell { background: var(--hunk-bg); color: var(--primary); font-weight: 700; }
+.empty { background: repeating-linear-gradient(-45deg, var(--empty-a), var(--empty-a) 8px, var(--empty-b) 8px, var(--empty-b) 16px); }
+.empty-state { color: var(--muted); padding: 32px; text-align: center; }
+
+@media (max-width: 760px) {
+  .topbar { padding: 0 14px; }
+  .app { padding: 32px 14px 64px; }
+  .summary-grid, .kind-grid { grid-template-columns: 1fr; }
+  .metric { border-right: 0; border-bottom: 1px solid var(--border); }
+  .filterbar { grid-template-columns: 1fr; position: static; }
+  .detail-header { display: block; }
+  .detail-actions { margin-top: 14px; }
+}
+</style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="https://github.com/tobiash/flux-manifest-preview" target="_blank" rel="noopener">Flux Manifest Preview</a>
+    <nav aria-label="Report navigation">
+      <a href="#overview" data-route="overview">Overview</a>
+      <a href="#resources" data-route="resources">Resources</a>
+    </nav>
+  </header>
+  <main id="app" class="app" tabindex="-1"></main>
+  <script type="application/json" id="fmp-report-data">{"meta":{"status":"changed","generatedAt":"2026-05-06T23:59:00Z","base":"origin/main","target":"pull/42/head","diffBytes":18432,"diffTruncated":false},"summary":{"added":5,"modified":4,"deleted":2,"total":11,"kindBreakdown":{"Deployment":{"added":0,"modified":2,"deleted":0,"total":2},"HTTPRoute":{"added":1,"modified":1,"deleted":0,"total":2},"Secret":{"added":2,"modified":0,"deleted":0,"total":2},"Service":{"added":0,"modified":1,"deleted":0,"total":1}},"clusterBreakdown":{"production":{"added":2,"modified":1,"deleted":1,"total":4},"staging":{"added":3,"modified":3,"deleted":1,"total":7}}},"policies":{"classifications":[{"id":"image_update","severity":"info"},{"id":"replicas_change","severity":"warning"},{"id":"ingress_change","severity":"warning"}],"labels":["image-update","needs-network-review"],"policyFailed":false},"resources":[{"index":0,"id":"flux-system|apps/v1|Deployment|apps|checkout-api","action":"modified","cluster":"staging","apiVersion":"apps/v1","kind":"Deployment","namespace":"apps","name":"checkout-api","producer":"apps/checkout","addedLines":3,"deletedLines":3,"diffRows":[{"type":"hunk","oldText":"@@ -17,12 +17,12 @@","newText":"@@ -17,12 +17,12 @@"},{"type":"context","oldLine":17,"newLine":17,"oldText":"apiVersion: apps/v1","newText":"apiVersion: apps/v1"},{"type":"context","oldLine":18,"newLine":18,"oldText":"kind: Deployment","newText":"kind: Deployment"},{"type":"context","oldLine":19,"newLine":19,"oldText":"metadata:","newText":"metadata:"},{"type":"context","oldLine":20,"newLine":20,"oldText":"  name: checkout-api","newText":"  name: checkout-api"},{"type":"context","oldLine":21,"newLine":21,"oldText":"  namespace: apps","newText":"  namespace: apps"},{"type":"deleted","oldLine":22,"oldText":"  replicas: 2"},{"type":"added","newLine":22,"newText":"  replicas: 4"},{"type":"context","oldLine":23,"newLine":23,"oldText":"spec:","newText":"spec:"},{"type":"context","oldLine":24,"newLine":24,"oldText":"  template:","newText":"  template:"},{"type":"context","oldLine":25,"newLine":25,"oldText":"    spec:","newText":"    spec:"},{"type":"context","oldLine":26,"newLine":26,"oldText":"      containers:","newText":"      containers:"},{"type":"context","oldLine":27,"newLine":27,"oldText":"        - name: checkout-api","newText":"        - name: checkout-api"},{"type":"deleted","oldLine":28,"oldText":"          image: ghcr.io/example/checkout-api:1.12.0"},{"type":"added","newLine":28,"newText":"          image: ghcr.io/example/checkout-api:1.13.0"},{"type":"context","oldLine":29,"newLine":29,"oldText":"          ports:","newText":"          ports:"},{"type":"context","oldLine":30,"newLine":30,"oldText":"            - containerPort: 8080","newText":"            - containerPort: 8080"},{"type":"deleted","oldLine":31,"oldText":"          resources: {requests: {cpu: 100m, memory: 128Mi}}"},{"type":"added","newLine":31,"newText":"          resources: {requests: {cpu: 250m, memory: 256Mi}}"}]},{"index":1,"id":"flux-system|networking.k8s.io/v1|Ingress|apps|checkout","action":"modified","cluster":"production","apiVersion":"networking.k8s.io/v1","kind":"Ingress","namespace":"apps","name":"checkout","producer":"apps/checkout","addedLines":4,"deletedLines":2,"diffRows":[{"type":"hunk","oldText":"@@ -17,12 +17,12 @@","newText":"@@ -17,12 +17,12 @@"},{"type":"context","oldLine":17,"newLine":17,"oldText":"apiVersion: apps/v1","newText":"apiVersion: apps/v1"},{"type":"context","oldLine":18,"newLine":18,"oldText":"kind: Deployment","newText":"kind: Deployment"},{"type":"context","oldLine":19,"newLine":19,"oldText":"metadata:","newText":"metadata:"},{"type":"context","oldLine":20,"newLine":20,"oldText":"  name: checkout-api","newText":"  name: checkout-api"},{"type":"context","oldLine":21,"newLine":21,"oldText":"  namespace: apps","newText":"  namespace: apps"},{"type":"deleted","oldLine":22,"oldText":"  replicas: 2"},{"type":"added","newLine":22,"newText":"  replicas: 4"},{"type":"context","oldLine":23,"newLine":23,"oldText":"spec:","newText":"spec:"},{"type":"context","oldLine":24,"newLine":24,"oldText":"  template:","newText":"  template:"},{"type":"context","oldLine":25,"newLine":25,"oldText":"    spec:","newText":"    spec:"},{"type":"context","oldLine":26,"newLine":26,"oldText":"      containers:","newText":"      containers:"},{"type":"context","oldLine":27,"newLine":27,"oldText":"        - name: checkout-api","newText":"        - name: checkout-api"},{"type":"deleted","oldLine":28,"oldText":"          image: ghcr.io/example/checkout-api:1.12.0"},{"type":"added","newLine":28,"newText":"          image: ghcr.io/example/checkout-api:1.13.0"},{"type":"context","oldLine":29,"newLine":29,"oldText":"          ports:","newText":"          ports:"},{"type":"context","oldLine":30,"newLine":30,"oldText":"            - containerPort: 8080","newText":"            - containerPort: 8080"},{"type":"deleted","oldLine":31,"oldText":"          resources: {requests: {cpu: 100m, memory: 128Mi}}"},{"type":"added","newLine":31,"newText":"          resources: {requests: {cpu: 250m, memory: 256Mi}}"}]},{"index":2,"id":"flux-system|v1|Secret|apps|checkout-tls","action":"added","cluster":"staging","apiVersion":"v1","kind":"Secret","namespace":"apps","name":"checkout-tls","producer":"apps/checkout","addedLines":18,"deletedLines":0,"diffRows":[{"type":"hunk","oldText":"@@ -17,12 +17,12 @@","newText":"@@ -17,12 +17,12 @@"},{"type":"context","oldLine":17,"newLine":17,"oldText":"apiVersion: apps/v1","newText":"apiVersion: apps/v1"},{"type":"context","oldLine":18,"newLine":18,"oldText":"kind: Deployment","newText":"kind: Deployment"},{"type":"context","oldLine":19,"newLine":19,"oldText":"metadata:","newText":"metadata:"},{"type":"context","oldLine":20,"newLine":20,"oldText":"  name: checkout-api","newText":"  name: checkout-api"},{"type":"context","oldLine":21,"newLine":21,"oldText":"  namespace: apps","newText":"  namespace: apps"},{"type":"deleted","oldLine":22,"oldText":"  replicas: 2"},{"type":"added","newLine":22,"newText":"  replicas: 4"},{"type":"context","oldLine":23,"newLine":23,"oldText":"spec:","newText":"spec:"},{"type":"context","oldLine":24,"newLine":24,"oldText":"  template:","newText":"  template:"},{"type":"context","oldLine":25,"newLine":25,"oldText":"    spec:","newText":"    spec:"},{"type":"context","oldLine":26,"newLine":26,"oldText":"      containers:","newText":"      containers:"},{"type":"context","oldLine":27,"newLine":27,"oldText":"        - name: checkout-api","newText":"        - name: checkout-api"},{"type":"deleted","oldLine":28,"oldText":"          image: ghcr.io/example/checkout-api:1.12.0"},{"type":"added","newLine":28,"newText":"          image: ghcr.io/example/checkout-api:1.13.0"},{"type":"context","oldLine":29,"newLine":29,"oldText":"          ports:","newText":"          ports:"},{"type":"context","oldLine":30,"newLine":30,"oldText":"            - containerPort: 8080","newText":"            - containerPort: 8080"},{"type":"deleted","oldLine":31,"oldText":"          resources: {requests: {cpu: 100m, memory: 128Mi}}"},{"type":"added","newLine":31,"newText":"          resources: {requests: {cpu: 250m, memory: 256Mi}}"}]}]}</script>
+  <script>(() => {
+  const data = JSON.parse(document.getElementById('fmp-report-data').textContent)
+  const app = document.getElementById('app')
+  const filters = {query: '', action: '', kind: '', namespace: '', producer: ''}
+  let focusedIndex = -1
+
+  function el(tag, attrs = {}, children = []) {
+    const node = document.createElement(tag)
+    for (const [key, value] of Object.entries(attrs)) {
+      if (key === 'class') node.className = value
+      else if (key === 'text') node.textContent = value
+      else node.setAttribute(key, value)
+    }
+    for (const child of children) node.append(child)
+    return node
+  }
+
+  function route() {
+    const hash = location.hash.replace(/^#/, '') || 'overview'
+    if (hash.startsWith('resource/')) {
+      const [path, query] = hash.split('?')
+      return {name: 'resource', index: Number(path.split('/')[1]), view: new URLSearchParams(query || '').get('view') || 'unified'}
+    }
+    const [name, query] = hash.split('?')
+    return {name, params: new URLSearchParams(query || '')}
+  }
+
+  function setActiveNav(name) {
+    document.querySelectorAll('[data-route]').forEach(a => a.classList.toggle('active', a.dataset.route === name))
+  }
+
+  function render() {
+    const r = route()
+    setActiveNav(r.name === 'resource' ? 'resources' : r.name)
+    focusedIndex = -1
+    app.replaceChildren()
+    if (r.name === 'resources') renderResources(r.params)
+    else if (r.name === 'resource') renderResource(r.index, r.view)
+    else renderOverview()
+    app.focus({preventScroll: true})
+  }
+
+  function renderOverview() {
+    app.append(
+      el('div', {class: 'eyebrow', text: 'Impact Summary'}),
+      el('h1', {text: titleForStatus()}),
+      el('div', {class: 'meta'}, [
+        el('span', {text: `Base: ${data.meta.base || 'unknown'}`}),
+        el('span', {text: `Target: ${data.meta.target || 'unknown'}`}),
+        el('span', {text: `Generated: ${data.meta.generatedAt}`})
+      ]),
+      summaryGrid(),
+      actionLinks()
+    )
+    renderClusterSection()
+    renderKindSection()
+    renderPolicySection()
+    renderTopChanges()
+  }
+
+  function titleForStatus() {
+    if (data.summary.total === 0) return 'No Manifest Changes'
+    if (data.policies.policyFailed || data.meta.status === 'error') return 'Review Required'
+    return 'Manifest Changes Detected'
+  }
+
+  function summaryGrid() {
+    return el('section', {class: 'summary-grid'}, [
+      metric('added', `+${data.summary.added}`, 'New resources', 'added'),
+      metric('modified', `~${data.summary.modified}`, 'Modified resources', 'modified'),
+      metric('deleted', `-${data.summary.deleted}`, 'Deleted resources', 'deleted'),
+      metric('', `${data.summary.total}`, 'Total changes', '')
+    ])
+  }
+
+  function metric(kind, value, label, action) {
+    const href = action !== undefined ? `#resources${action ? '?action=' + action : ''}` : null
+    if (href) return el('a', {href, class: `metric ${kind}`}, [el('span', {class: 'metric-value', text: value}), el('span', {class: 'metric-label', text: label})])
+    return el('div', {class: `metric ${kind}`}, [el('span', {class: 'metric-value', text: value}), el('span', {class: 'metric-label', text: label})])
+  }
+
+  function actionLinks() {
+    return el('div', {class: 'overview-actions'}, [
+      el('a', {class: 'button', href: '#resources', text: 'Open Resource Browser'}),
+      el('a', {class: 'button secondary', href: '#overview', text: `${data.resources.length} resources indexed`})
+    ])
+  }
+
+  function renderClusterSection() {
+    const rows = Object.entries(data.summary.clusterBreakdown || {}).sort((a, b) => b[1].total - a[1].total || a[0].localeCompare(b[0]))
+    if (rows.length === 0) return
+    // Only show cluster breakdown in multi-cluster mode: either >1 cluster, or a single explicitly-named cluster.
+    if (rows.length === 1 && !rows[0][0]) return
+    app.append(el('h2', {text: 'Clusters'}))
+    const grid = el('div', {class: 'cluster-grid'})
+    for (const [cluster, row] of rows) {
+      const clusterLabel = cluster || '(default)'
+      const href = `#resources?cluster=${encodeURIComponent(cluster || 'default')}`
+      grid.append(el('a', {class: 'card cluster-card', href}, [
+        el('div', {class: 'card-title'}, [el('strong', {text: clusterLabel}), el('span', {class: 'pill', text: String(row.total)})]),
+        el('small', {text: `${row.added} added · ${row.modified} modified · ${row.deleted} deleted`})
+      ]))
+    }
+    app.append(grid)
+  }
+
+  function renderKindSection() {
+    const rows = Object.entries(data.summary.kindBreakdown || {}).sort((a, b) => b[1].total - a[1].total || a[0].localeCompare(b[0]))
+    if (rows.length === 0) return
+    app.append(el('h2', {text: 'Classifications'}))
+    const grid = el('div', {class: 'kind-grid'})
+    for (const [kind, row] of rows) {
+      grid.append(el('div', {class: 'card'}, [
+        el('div', {class: 'card-title'}, [el('strong', {text: kind}), el('span', {class: 'pill', text: String(row.total)})]),
+        el('small', {text: `${row.added} added · ${row.modified} modified · ${row.deleted} deleted`})
+      ]))
+    }
+    app.append(grid)
+  }
+
+  function renderPolicySection() {
+    const items = []
+    for (const item of data.policies.classifications || []) items.push(`Classification: ${item.id || item.ID || 'unknown'}`)
+    for (const item of data.policies.violations || []) items.push(`Violation: ${item.id || item.ID || item.message || 'unknown'}`)
+    for (const label of data.policies.labels || []) items.push(`Label: ${label}`)
+    if (items.length === 0) return
+    app.append(el('h2', {text: 'Policy Signals'}))
+    const cards = el('div', {class: 'cards'})
+    for (const item of items) cards.append(el('div', {class: 'card'}, [el('span', {class: 'pill error', text: item})]))
+    app.append(cards)
+  }
+
+  function renderTopChanges() {
+    app.append(el('h2', {text: 'Changes'}))
+    const list = el('div', {class: 'resource-list'})
+    for (const res of data.resources.slice(0, 8)) list.append(resourceCard(res))
+    if (data.resources.length === 0) list.append(el('div', {class: 'empty-state', text: 'No changed resources.'}))
+    app.append(list)
+  }
+
+  function renderResources(params) {
+    if (params) {
+      const action = params.get('action')
+      if (action) filters.action = action
+      const cluster = params.get('cluster')
+      if (cluster) filters.cluster = cluster
+    }
+    app.replaceChildren()
+    app.append(el('div', {class: 'eyebrow', text: 'Resource Browser'}), el('h1', {text: 'Changed Resources'}), filterBar())
+    renderFilteredList()
+  }
+
+  function renderFilteredList() {
+    let list = app.querySelector('.resource-list')
+    if (list) list.replaceChildren()
+    else { list = el('div', {class: 'resource-list'}); app.append(list) }
+    const rows = filteredResources()
+    for (const res of rows) list.append(resourceCard(res))
+    if (rows.length === 0) list.append(el('div', {class: 'empty-state', text: 'No resources match the current filters.'}))
+    const count = app.querySelector('.filter-count')
+    if (count) count.textContent = `${rows.length} of ${data.resources.length} resources`
+    focusedIndex = -1
+  }
+
+  function filterBar() {
+    const bar = el('div', {class: 'filterbar'})
+    const search = el('input', {placeholder: 'Search name, namespace, kind, producer', value: filters.query})
+    search.addEventListener('input', () => { filters.query = search.value; renderFilteredList() })
+    bar.append(search, select('action', [''].concat(unique(data.resources.map(r => r.action)))), select('kind', [''].concat(unique(data.resources.map(r => r.kind)))), select('namespace', [''].concat(unique(data.resources.map(r => r.namespace || 'cluster-scoped')))), select('cluster', [''].concat(unique(data.resources.map(r => r.cluster || 'default')))), select('producer', [''].concat(unique(data.resources.map(r => r.producer || 'unknown')))), el('span', {class: 'filter-count', text: `${filteredResources().length} of ${data.resources.length} resources`}))
+    return bar
+  }
+
+  function select(key, values) {
+    const node = el('select')
+    for (const value of values) node.append(el('option', {value, text: value || `All ${key}s`}))
+    node.value = filters[key]
+    node.addEventListener('change', () => { filters[key] = node.value; renderFilteredList() })
+    return node
+  }
+
+  function unique(values) {
+    return [...new Set(values)].filter(Boolean).sort((a, b) => a.localeCompare(b))
+  }
+
+  function filteredResources() {
+    return data.resources.filter(r => {
+      const haystack = `${r.name} ${r.namespace || 'cluster-scoped'} ${r.kind} ${r.cluster || 'default'} ${r.producer || ''}`.toLowerCase()
+      return (!filters.query || haystack.includes(filters.query)) &&
+        (!filters.action || r.action === filters.action) &&
+        (!filters.kind || r.kind === filters.kind) &&
+        (!filters.namespace || (r.namespace || 'cluster-scoped') === filters.namespace) &&
+        (!filters.cluster || (r.cluster || 'default') === filters.cluster) &&
+        (!filters.producer || (r.producer || 'unknown') === filters.producer)
+    })
+  }
+
+  function sparkline(res) {
+    const total = res.addedLines + res.deletedLines
+    if (total === 0) return el('div', {class: 'sparkline'})
+    const wrap = el('div', {class: 'sparkline'})
+    const addedPct = (res.addedLines / total * 100).toFixed(1)
+    const deletedPct = (res.deletedLines / total * 100).toFixed(1)
+    const addedBar = el('div', {class: 'sparkline-bar added', style: `width:${addedPct}%`})
+    const deletedBar = el('div', {class: 'sparkline-bar deleted', style: `width:${deletedPct}%;left:${addedPct}%`})
+    wrap.append(addedBar, deletedBar)
+    return wrap
+  }
+
+  function resourceCard(res) {
+    return el('a', {class: 'resource-card', href: `#resource/${res.index}`, tabindex: '0'}, [
+      el('div', {class: 'resource-title'}, [
+        el('strong', {text: `${res.kind} / ${res.namespace || 'cluster-scoped'} / ${res.name}`}),
+        el('span', {class: `pill ${res.action}`, text: res.action})
+      ]),
+      el('div', {class: 'resource-meta', text: `${res.apiVersion} · Producer: ${res.producer || 'unknown'}`}),
+      el('div', {class: 'resource-foot'}, [
+        el('span', {text: `+${res.addedLines}`}),
+        el('span', {text: `-${res.deletedLines}`}),
+        sparkline(res)
+      ])
+    ])
+  }
+
+  function diffStats(res) {
+    let added = 0, deleted = 0, context = 0
+    for (const row of res.diffRows) {
+      if (row.type === 'added') added++
+      else if (row.type === 'deleted') deleted++
+      else if (row.type === 'context') context++
+    }
+    return el('div', {class: 'diff-stats'}, [
+      el('span', {class: 'added', text: `+${added} added`}),
+      el('span', {class: 'deleted', text: `-${deleted} deleted`}),
+      el('span', {class: 'context', text: `${context} unchanged`})
+    ])
+  }
+
+  function copyButton(res) {
+    const btn = el('button', {class: 'copy-btn', text: 'Copy diff'})
+    btn.addEventListener('click', () => {
+      const lines = res.diffRows.map(row => {
+        if (row.type === 'hunk') return row.oldText
+        const sign = row.type === 'added' ? '+' : row.type === 'deleted' ? '-' : ' '
+        return sign + (row.type === 'added' ? row.newText : row.oldText)
+      })
+      navigator.clipboard.writeText(lines.join('\n')).then(() => {
+        btn.textContent = 'Copied'
+        btn.classList.add('copied')
+        setTimeout(() => { btn.textContent = 'Copy diff'; btn.classList.remove('copied') }, 1500)
+      })
+    })
+    return btn
+  }
+
+  function renderResource(index, view) {
+    const res = data.resources[index]
+    if (!res) { app.append(el('div', {class: 'empty-state', text: 'Resource not found.'})); return }
+    app.append(
+      el('div', {class: 'breadcrumb'}, [el('a', {href: '#resources', text: 'Resources'}), document.createTextNode(` / ${res.kind} / ${res.name}`)]),
+      el('section', {class: 'detail-header'}, [
+        el('div', {}, [el('div', {class: 'eyebrow', text: res.action}), el('h1', {text: `${res.kind} ${res.name}`}), el('p', {text: `${res.namespace || 'cluster-scoped'} · ${res.cluster || 'default'} · ${res.apiVersion} · Producer: ${res.producer || 'unknown'}`})]),
+        el('div', {class: 'detail-actions'}, [diffToggle(index, view), copyButton(res)])
+      ]),
+      diffStats(res),
+      el('section', {class: 'detail-panel'}, [diffView(res, view)])
+    )
+  }
+
+  function diffToggle(index, view) {
+    const toggle = el('div', {class: 'toggle'})
+    for (const mode of ['unified', 'split']) {
+      const button = el('button', {class: view === mode ? 'active' : '', text: mode === 'split' ? 'Split' : 'Unified'})
+      button.addEventListener('click', () => { location.hash = `resource/${index}?view=${mode}` })
+      toggle.append(button)
+    }
+    return toggle
+  }
+
+  function diffView(res, view) {
+    const wrap = el('div', {class: `diff ${view}`})
+    for (const row of res.diffRows) wrap.append(view === 'split' ? splitRow(row) : unifiedRow(row))
+    if (res.truncated) wrap.append(el('div', {class: 'empty-state', text: 'Diff truncated by html-report-max-resource-diff-bytes.'}))
+    return wrap
+  }
+
+  function unifiedRow(row) {
+    const sign = row.type === 'added' ? '+' : row.type === 'deleted' ? '-' : ' '
+    const number = row.type === 'added' ? row.newLine : row.oldLine || row.newLine
+    const text = row.type === 'hunk' ? row.oldText : `${sign}${row.type === 'added' ? row.newText : row.oldText}`
+    return el('div', {class: `diff-row ${row.type}`}, [el('div', {class: 'cell line-no', text: row.type === 'hunk' ? '' : String(number || '')}), el('div', {class: 'cell', text})])
+  }
+
+  function splitRow(row) {
+    if (row.type === 'hunk') return el('div', {class: 'diff-row hunk'}, [el('div', {class: 'cell line-no'}), el('div', {class: 'cell', text: row.oldText}), el('div', {class: 'cell line-no'}), el('div', {class: 'cell', text: row.newText})])
+    return el('div', {class: `diff-row ${row.type}`}, [
+      el('div', {class: 'cell line-no', text: row.oldLine ? String(row.oldLine) : ''}),
+      el('div', {class: `cell ${row.oldLine ? '' : 'empty'}`, text: row.oldText || ''}),
+      el('div', {class: 'cell line-no', text: row.newLine ? String(row.newLine) : ''}),
+      el('div', {class: `cell ${row.newLine ? '' : 'empty'}`, text: row.newText || ''})
+    ])
+  }
+
+  function handleKeydown(e) {
+    const cards = () => [...app.querySelectorAll('.resource-card')]
+    const r = route()
+
+    if (r.name === 'resources') {
+      const all = cards()
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        focusedIndex = Math.min(focusedIndex + 1, all.length - 1)
+        all[focusedIndex]?.focus()
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        focusedIndex = Math.max(focusedIndex - 1, 0)
+        all[focusedIndex]?.focus()
+      } else if (e.key === 'Enter' && focusedIndex >= 0 && all[focusedIndex]) {
+        location.hash = all[focusedIndex].getAttribute('href').replace(/^.*#/, '#')
+      }
+    }
+
+    if (r.name === 'resource' && e.key === 'Escape') {
+      e.preventDefault()
+      location.hash = '#resources'
+    }
+  }
+
+  window.addEventListener('hashchange', render)
+  window.addEventListener('keydown', handleKeydown)
+  render()
+})()
+</script>
+</body>
+</html>
