@@ -17,11 +17,13 @@ replica_kind(kind) if kind == "ReplicaSet"
 
 classifications contains {
   "id": "image_update",
+  "priority": 20,
   "title": "Container image updated",
   "severity": "info",
   "kind": change.kind,
   "namespace": change.namespace,
   "name": change.name,
+  "cluster": object.get(change, "cluster", ""),
   "message": sprintf("%s image changed", [change.kind])
 } if {
   enabled("image_update")
@@ -35,11 +37,13 @@ classifications contains {
 
 classifications contains {
   "id": "secret_change",
+  "priority": 80,
   "title": "Secret changed",
   "severity": "warning",
   "kind": change.kind,
   "namespace": change.namespace,
   "name": change.name,
+  "cluster": object.get(change, "cluster", ""),
   "message": "Secret data changed"
 } if {
   enabled("secret_change")
@@ -49,11 +53,13 @@ classifications contains {
 
 classifications contains {
   "id": "ingress_change",
+  "priority": 50,
   "title": "Networking changed",
   "severity": "warning",
   "kind": change.kind,
   "namespace": change.namespace,
   "name": change.name,
+  "cluster": object.get(change, "cluster", ""),
   "message": sprintf("%s routing changed", [change.kind])
 } if {
   enabled("ingress_change")
@@ -63,11 +69,13 @@ classifications contains {
 
 classifications contains {
   "id": "crd_change",
+  "priority": 90,
   "title": "CRD changed",
   "severity": "warning",
   "kind": change.kind,
   "namespace": change.namespace,
   "name": change.name,
+  "cluster": object.get(change, "cluster", ""),
   "message": "CustomResourceDefinition changed"
 } if {
   enabled("crd_change")
@@ -77,11 +85,13 @@ classifications contains {
 
 classifications contains {
   "id": "namespace_delete",
+  "priority": 100,
   "title": "Namespace removed",
   "severity": "error",
   "kind": change.kind,
   "namespace": change.namespace,
   "name": change.name,
+  "cluster": object.get(change, "cluster", ""),
   "message": "Namespace deleted"
 } if {
   enabled("namespace_delete")
@@ -92,11 +102,13 @@ classifications contains {
 
 classifications contains {
   "id": "stateful_workload_change",
+  "priority": 40,
   "title": "Stateful workload changed",
   "severity": "warning",
   "kind": change.kind,
   "namespace": change.namespace,
   "name": change.name,
+  "cluster": object.get(change, "cluster", ""),
   "message": sprintf("%s changed", [change.kind])
 } if {
   enabled("stateful_workload_change")
@@ -106,11 +118,13 @@ classifications contains {
 
 classifications contains {
   "id": "pvc_change",
+  "priority": 70,
   "title": "Persistent volume claim changed",
   "severity": "warning",
   "kind": change.kind,
   "namespace": change.namespace,
   "name": change.name,
+  "cluster": object.get(change, "cluster", ""),
   "message": "PersistentVolumeClaim changed"
 } if {
   enabled("pvc_change")
@@ -120,11 +134,13 @@ classifications contains {
 
 classifications contains {
   "id": "service_type_change",
+  "priority": 60,
   "title": "Service type changed",
   "severity": "warning",
   "kind": change.kind,
   "namespace": change.namespace,
   "name": change.name,
+  "cluster": object.get(change, "cluster", ""),
   "message": sprintf("Service type changed to %v", [change.new.spec.type])
 } if {
   enabled("service_type_change")
@@ -140,11 +156,13 @@ classifications contains {
 
 classifications contains {
   "id": "replicas_change",
+  "priority": 30,
   "title": "Replica count changed",
   "severity": "info",
   "kind": change.kind,
   "namespace": change.namespace,
   "name": change.name,
+  "cluster": object.get(change, "cluster", ""),
   "message": sprintf("Replicas changed from %v to %v", [old_replicas, new_replicas])
 } if {
   enabled("replicas_change")

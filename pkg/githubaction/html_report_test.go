@@ -3,6 +3,9 @@ package githubaction
 import (
 	"strings"
 	"testing"
+
+	fmpdiff "github.com/tobiash/flux-manifest-preview/pkg/diff"
+	"sigs.k8s.io/kustomize/kyaml/resid"
 )
 
 func TestParseUnifiedDiffRows(t *testing.T) {
@@ -24,6 +27,48 @@ func TestParseUnifiedDiffRows(t *testing.T) {
 	}
 	if rows[4].Type != "added" || rows[4].NewLine != 4 || rows[4].NewText != "next" {
 		t.Fatalf("added row[4] = %+v", rows[4])
+	}
+}
+
+func TestBuildHTMLReportDataKeepsSameResourceInDifferentClustersDistinct(t *testing.T) {
+	result := &fmpdiff.DiffResult{
+		Modified: []fmpdiff.ResourceChange{
+			{
+				Cluster:   "staging",
+				ID:        resid.NewResIdWithNamespace(resid.Gvk{Group: "apps", Version: "v1", Kind: "Deployment"}, "checkout-api", "apps"),
+				Kind:      "Deployment",
+				Name:      "checkout-api",
+				Namespace: "apps",
+				Producer:  "apps/checkout",
+				Action:    "modified",
+				Old:       map[string]any{"kind": "Deployment", "metadata": map[string]any{"name": "checkout-api", "namespace": "apps"}, "spec": map[string]any{"replicas": 2}},
+				New:       map[string]any{"kind": "Deployment", "metadata": map[string]any{"name": "checkout-api", "namespace": "apps"}, "spec": map[string]any{"replicas": 3}},
+			},
+			{
+				Cluster:   "production",
+				ID:        resid.NewResIdWithNamespace(resid.Gvk{Group: "apps", Version: "v1", Kind: "Deployment"}, "checkout-api", "apps"),
+				Kind:      "Deployment",
+				Name:      "checkout-api",
+				Namespace: "apps",
+				Producer:  "apps/checkout",
+				Action:    "modified",
+				Old:       map[string]any{"kind": "Deployment", "metadata": map[string]any{"name": "checkout-api", "namespace": "apps"}, "spec": map[string]any{"replicas": 2}},
+				New:       map[string]any{"kind": "Deployment", "metadata": map[string]any{"name": "checkout-api", "namespace": "apps"}, "spec": map[string]any{"replicas": 4}},
+			},
+		},
+	}
+	report := &ActionReport{Status: StatusChanged, ResourcesModified: 2, ResourcesTotal: 2}
+
+	data := BuildHTMLReportData(&Request{}, report, result)
+
+	if len(data.Resources) != 2 {
+		t.Fatalf("len(data.Resources) = %d, want 2", len(data.Resources))
+	}
+	if data.Resources[0].ID == data.Resources[1].ID {
+		t.Fatalf("resource IDs should include cluster and be distinct, got %q", data.Resources[0].ID)
+	}
+	if !strings.HasPrefix(data.Resources[0].ID, "production|") || !strings.HasPrefix(data.Resources[1].ID, "staging|") {
+		t.Fatalf("resources sorted/identified without cluster: %#v", []string{data.Resources[0].ID, data.Resources[1].ID})
 	}
 }
 

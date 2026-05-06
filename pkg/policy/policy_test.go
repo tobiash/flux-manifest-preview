@@ -14,6 +14,7 @@ func TestEvaluateBuiltinsAndMappings(t *testing.T) {
 	result, err := Evaluate(context.Background(), &diff.DiffResult{
 		Modified: []diff.ResourceChange{{
 			Action:    "modified",
+			Cluster:   "staging",
 			Kind:      "Deployment",
 			Name:      "web",
 			Namespace: "default",
@@ -30,8 +31,33 @@ func TestEvaluateBuiltinsAndMappings(t *testing.T) {
 	if len(result.Classifications) != 1 || result.Classifications[0].ID != "image_update" {
 		t.Fatalf("expected image_update classification, got %+v", result.Classifications)
 	}
+	if result.Classifications[0].Cluster != "staging" {
+		t.Fatalf("expected cluster on classification, got %+v", result.Classifications[0])
+	}
+	if result.Classifications[0].Priority != 20 {
+		t.Fatalf("expected priority on classification, got %+v", result.Classifications[0])
+	}
 	if len(result.Labels) != 1 || result.Labels[0] != "image-update" {
 		t.Fatalf("expected mapped label, got %v", result.Labels)
+	}
+}
+
+func TestEvaluateBuiltinWithoutCluster(t *testing.T) {
+	result, err := Evaluate(context.Background(), &diff.DiffResult{
+		Modified: []diff.ResourceChange{{
+			Action:    "modified",
+			Kind:      "Deployment",
+			Name:      "web",
+			Namespace: "default",
+			Old:       map[string]any{"spec": map[string]any{"replicas": 1}},
+			New:       map[string]any{"spec": map[string]any{"replicas": 2}},
+		}},
+	}, &config.PolicyConfig{Builtin: []string{"replicas_change"}}, t.TempDir())
+	if err != nil {
+		t.Fatalf("Evaluate() error = %v", err)
+	}
+	if len(result.Classifications) != 1 || result.Classifications[0].Cluster != "" {
+		t.Fatalf("expected classification with empty cluster, got %+v", result.Classifications)
 	}
 }
 

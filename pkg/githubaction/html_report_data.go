@@ -131,7 +131,7 @@ func htmlResourceChanges(changes []fmpdiff.ResourceChange, maxDiffBytes int) []H
 		added, deleted := countChangedRows(rows)
 		apiVersion := gvkAPIVersion(change.ID.Group, change.ID.Version)
 		out = append(out, HTMLResourceChange{
-			ID:           resourceIdentity(change.Producer, apiVersion, change.Kind, change.Namespace, change.Name),
+			ID:           resourceIdentity(change.Cluster, change.Producer, apiVersion, change.Kind, change.Namespace, change.Name),
 			Action:       change.Action,
 			Cluster:      change.Cluster,
 			APIVersion:   apiVersion,
@@ -149,11 +149,11 @@ func htmlResourceChanges(changes []fmpdiff.ResourceChange, maxDiffBytes int) []H
 }
 
 func resourceSortKey(r HTMLResourceChange) string {
-	return strings.Join([]string{r.Producer, r.Kind, r.Namespace, r.Name, r.Action}, "\x00")
+	return strings.Join([]string{r.Cluster, r.Producer, r.Kind, r.Namespace, r.Name, r.Action}, "\x00")
 }
 
-func resourceIdentity(producer, apiVersion, kind, namespace, name string) string {
-	return strings.Join([]string{producer, apiVersion, kind, namespace, name}, "|")
+func resourceIdentity(cluster, producer, apiVersion, kind, namespace, name string) string {
+	return strings.Join([]string{cluster, producer, apiVersion, kind, namespace, name}, "|")
 }
 
 func yamlMap(m map[string]any) string {

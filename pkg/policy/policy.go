@@ -22,7 +22,9 @@ type Classification struct {
 	ID        string `json:"id"`
 	Title     string `json:"title,omitempty"`
 	Severity  string `json:"severity,omitempty"`
+	Priority  int    `json:"priority,omitempty"`
 	Message   string `json:"message,omitempty"`
+	Cluster   string `json:"cluster,omitempty"`
 	Kind      string `json:"kind,omitempty"`
 	Namespace string `json:"namespace,omitempty"`
 	Name      string `json:"name,omitempty"`
@@ -31,7 +33,9 @@ type Classification struct {
 type Violation struct {
 	ID        string `json:"id"`
 	Severity  string `json:"severity,omitempty"`
+	Priority  int    `json:"priority,omitempty"`
 	Message   string `json:"message,omitempty"`
+	Cluster   string `json:"cluster,omitempty"`
 	Kind      string `json:"kind,omitempty"`
 	Namespace string `json:"namespace,omitempty"`
 	Name      string `json:"name,omitempty"`
@@ -60,6 +64,7 @@ type summary struct {
 
 type diffChange struct {
 	Action    string         `json:"action"`
+	Cluster   string         `json:"cluster,omitempty"`
 	Kind      string         `json:"kind"`
 	Name      string         `json:"name"`
 	Namespace string         `json:"namespace,omitempty"`
@@ -176,6 +181,7 @@ func toInputChanges(result *diff.DiffResult) []diffChange {
 		for _, change := range changes {
 			out = append(out, diffChange{
 				Action:    change.Action,
+				Cluster:   change.Cluster,
 				Kind:      change.Kind,
 				Name:      change.Name,
 				Namespace: change.Namespace,
@@ -204,16 +210,19 @@ func normalizeClassifications(items []Classification) []Classification {
 		return nil
 	}
 	sort.Slice(items, func(i, j int) bool {
-		if items[i].ID == items[j].ID {
-			if items[i].Kind == items[j].Kind {
-				if items[i].Namespace == items[j].Namespace {
-					return items[i].Name < items[j].Name
-				}
-				return items[i].Namespace < items[j].Namespace
-			}
+		if items[i].Cluster != items[j].Cluster {
+			return items[i].Cluster < items[j].Cluster
+		}
+		if items[i].ID != items[j].ID {
+			return items[i].ID < items[j].ID
+		}
+		if items[i].Kind != items[j].Kind {
 			return items[i].Kind < items[j].Kind
 		}
-		return items[i].ID < items[j].ID
+		if items[i].Namespace != items[j].Namespace {
+			return items[i].Namespace < items[j].Namespace
+		}
+		return items[i].Name < items[j].Name
 	})
 	return items
 }
@@ -223,16 +232,19 @@ func normalizeViolations(items []Violation) []Violation {
 		return nil
 	}
 	sort.Slice(items, func(i, j int) bool {
-		if items[i].ID == items[j].ID {
-			if items[i].Kind == items[j].Kind {
-				if items[i].Namespace == items[j].Namespace {
-					return items[i].Name < items[j].Name
-				}
-				return items[i].Namespace < items[j].Namespace
-			}
+		if items[i].Cluster != items[j].Cluster {
+			return items[i].Cluster < items[j].Cluster
+		}
+		if items[i].ID != items[j].ID {
+			return items[i].ID < items[j].ID
+		}
+		if items[i].Kind != items[j].Kind {
 			return items[i].Kind < items[j].Kind
 		}
-		return items[i].ID < items[j].ID
+		if items[i].Namespace != items[j].Namespace {
+			return items[i].Namespace < items[j].Namespace
+		}
+		return items[i].Name < items[j].Name
 	})
 	return items
 }
