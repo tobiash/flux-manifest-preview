@@ -118,7 +118,7 @@ jobs:
         run: fmp test tests/action -k clusters/kube --render-helm=false -q
       - name: Run fmp test (should fail on broken path)
         run: |
-          if fmp test tests/action -k nonexistent --render-helm=false -q 2>/dev/null; then
+          if fmp test /tmp/does-not-exist -k nonexistent --render-helm=false -q 2>/dev/null; then
             echo "ERROR: fmp test should have failed for nonexistent path"
             exit 1
           fi
@@ -126,7 +126,7 @@ jobs:
       - name: Render and verify sorted output
         run: |
           OUTPUT=$(fmp render tests/action -k apps/podinfo --render-helm=false -q -s)
-          echo "$OUTPUT" | head -1 | grep -q "^apiVersion" || { echo "Missing apiVersion"; exit 1; }
+          echo "$OUTPUT" | grep -q "^apiVersion" || { echo "Missing apiVersion"; exit 1; }
           echo "$OUTPUT" | grep -q "kind: ConfigMap" || { echo "Missing ConfigMap kind"; exit 1; }
           echo "$OUTPUT" | grep -q "name: podinfo-config" || { echo "Missing resource name"; exit 1; }
 

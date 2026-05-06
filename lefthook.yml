@@ -39,3 +39,26 @@ pre-push:
       run: env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE go test ./...
     lint:
       run: golangci-lint run ./...
+    action-cli-integration:
+      run: |
+        set -euo pipefail
+        tmp_fmp=$(mktemp)
+        trap 'rm -f "$tmp_fmp"' EXIT
+        go build -o "$tmp_fmp" ./cmd/fmp
+
+        "$tmp_fmp" test tests/action -k clusters/kube --render-helm=false -q
+        if "$tmp_fmp" test /tmp/does-not-exist -k nonexistent --render-helm=false -q 2>/dev/null; then
+          echo "ERROR: fmp test should have failed for nonexistent path"
+          exit 1
+        fi
+
+        output=$("$tmp_fmp" render tests/action -k apps/podinfo --render-helm=false -q -s)
+        echo "$output" | grep -q "^apiVersion" || { echo "Missing apiVersion"; exit 1; }
+        echo "$output" | grep -q "kind: ConfigMap" || { echo "Missing ConfigMap kind"; exit 1; }
+        echo "$output" | grep -q "name: podinfo-config" || { echo "Missing resource name"; exit 1; }
+
+        output2=$("$tmp_fmp" render tests/action -k apps/podinfo --render-helm=false -q -s)
+        if [ "$output" != "$output2" ]; then
+          echo "ERROR: sorted output is not deterministic"
+          exit 1
+        fi
