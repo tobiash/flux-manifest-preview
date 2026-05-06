@@ -47,9 +47,9 @@ Use it to catch risky changes before merge:
 
 Enable `html-report` in the GitHub Action to generate a browsable report artifact, or deploy it to GitHub Pages for direct links from pull requests.
 
-| Impact overview                                        | Unified resource diff                                   | Side-by-side diff                                                 |
-| ------------------------------------------------------ | ------------------------------------------------------- | ----------------------------------------------------------------- |
-| ![HTML report overview](docs/assets/html-overview.png) | ![Unified diff view](docs/assets/html-unified-diff.png) | ![Side-by-side diff view](docs/assets/html-side-by-side-diff.png) |
+| Impact overview                                                                         | Unified resource diff                                                                        | Side-by-side diff                                                                                           |
+| --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| [![HTML report overview](docs/assets/fmp-report-overview.png)](docs/assets/fmp-report-overview.png) | [![Unified diff view](docs/assets/fmp-report-unified-diff.png)](docs/assets/fmp-report-unified-diff.png) | [![Side-by-side diff view](docs/assets/fmp-report-side-by-side-diff.png)](docs/assets/fmp-report-side-by-side-diff.png) |
 
 The report includes:
 
