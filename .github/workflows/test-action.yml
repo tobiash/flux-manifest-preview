@@ -6,13 +6,13 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - 'action.yml'
-      - '.github/workflows/test-action.yml'
-      - 'src/**'
-      - 'dist/**'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'tests/action/**'
+      - "action.yml"
+      - ".github/workflows/test-action.yml"
+      - "src/**"
+      - "dist/**"
+      - "package.json"
+      - "package-lock.json"
+      - "tests/action/**"
 
 concurrency:
   group: action-integration-${{ github.event.pull_request.number || github.ref }}
@@ -53,41 +53,41 @@ jobs:
           repo-b: /tmp/repo-b
           kustomizations: |
             clusters/kube
-          helm: 'false'
-          html-report: 'true'
+          helm: "false"
+          html-report: "true"
 
       - name: Verify outputs
         run: |
           echo "Status: ${{ steps.fmp.outputs.status }}"
           echo "Changed: ${{ steps.fmp.outputs.changed }}"
           echo "Resources total: ${{ steps.fmp.outputs.resources-total }}"
-          
+
           if [ "${{ steps.fmp.outputs.changed }}" != "true" ]; then
             echo "ERROR: expected changed=true"
             exit 1
           fi
-          
+
           if [ -z "${{ steps.fmp.outputs.diff-file }}" ]; then
             echo "ERROR: diff-file output is empty"
             exit 1
           fi
-          
+
           if [ ! -f "${{ steps.fmp.outputs.diff-file }}" ]; then
             echo "ERROR: diff file does not exist"
             exit 1
           fi
-          
+
           echo "Diff file: ${{ steps.fmp.outputs.diff-file }}"
           cat "${{ steps.fmp.outputs.diff-file }}" | grep -q "blue" || { echo "Missing 'blue' in diff"; exit 1; }
           cat "${{ steps.fmp.outputs.diff-file }}" | grep -q "green" || { echo "Missing 'green' in diff"; exit 1; }
           echo "Diff contains expected changes"
-          
+
           if [ -z "${{ steps.fmp.outputs.summary-file }}" ]; then
             echo "ERROR: summary-file output is empty"
             exit 1
           fi
           echo "Summary file exists: ${{ steps.fmp.outputs.summary-file }}"
-          
+
           if [ -z "${{ steps.fmp.outputs.report-file }}" ]; then
             echo "ERROR: report-file output is empty"
             exit 1

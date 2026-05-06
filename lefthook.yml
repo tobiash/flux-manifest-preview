@@ -6,7 +6,7 @@ pre-commit:
   commands:
     gofmt:
       glob: "*.go"
-      run: gofmt -w {staged_files}
+      run: gofmt -s -w {staged_files}
       stage_fixed: true
     govet:
       glob: "*.go"
@@ -39,6 +39,10 @@ pre-push:
       run: env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE go test ./...
     lint:
       run: golangci-lint run ./...
+    verify-action-bundle:
+      run: |
+        npm run build
+        git diff --exit-code dist
     action-cli-integration:
       run: |
         set -euo pipefail

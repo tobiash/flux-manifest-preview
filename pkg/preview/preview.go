@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/go-logr/logr"
@@ -306,6 +307,15 @@ func (p *Preview) loadRepoClustered(ctx context.Context, path string) (map[strin
 	return results, nil
 }
 
+func sortedClusterNames(results map[string]*loadRepoResult) []string {
+	clusters := make([]string, 0, len(results))
+	for cluster := range results {
+		clusters = append(clusters, cluster)
+	}
+	sort.Strings(clusters)
+	return clusters
+}
+
 // Render renders the resources at path and writes the YAML output.
 func (p *Preview) Render(ctx context.Context, path string, out io.Writer) error {
 	results, err := p.loadRepo(ctx, path)
@@ -314,7 +324,9 @@ func (p *Preview) Render(ctx context.Context, path string, out io.Writer) error 
 	}
 	if p.isClustered() {
 		_, _ = fmt.Fprintln(out, "# Rendered manifests")
-		for cluster, result := range results {
+		clusters := sortedClusterNames(results)
+		for _, cluster := range clusters {
+			result := results[cluster]
 			p.applyOutputOptions(result.render)
 			_, _ = fmt.Fprintf(out, "\n---\n# cluster: %s\n---\n", cluster)
 			yaml, err := result.render.AsYaml()
@@ -326,8 +338,8 @@ func (p *Preview) Render(ctx context.Context, path string, out io.Writer) error 
 			}
 		}
 		var allErrors []error
-		for _, result := range results {
-			allErrors = append(allErrors, result.errors...)
+		for _, cluster := range clusters {
+			allErrors = append(allErrors, results[cluster].errors...)
 		}
 		if len(allErrors) > 0 {
 			return &ExpansionError{Errors: allErrors}
@@ -357,7 +369,9 @@ func (p *Preview) RenderJSON(ctx context.Context, path string, out io.Writer) er
 	}
 	if p.isClustered() {
 		items := make([]map[string]any, 0)
-		for cluster, result := range results {
+		clusters := sortedClusterNames(results)
+		for _, cluster := range clusters {
+			result := results[cluster]
 			p.applyOutputOptions(result.render)
 			for _, res := range result.render.Resources() {
 				m, err := res.Map()
@@ -379,8 +393,8 @@ func (p *Preview) RenderJSON(ctx context.Context, path string, out io.Writer) er
 			return fmt.Errorf("error encoding json: %w", err)
 		}
 		var allErrors []error
-		for _, result := range results {
-			allErrors = append(allErrors, result.errors...)
+		for _, cluster := range clusters {
+			allErrors = append(allErrors, results[cluster].errors...)
 		}
 		if len(allErrors) > 0 {
 			return &ExpansionError{Errors: allErrors}
@@ -423,7 +437,9 @@ func (p *Preview) Test(ctx context.Context, path string, out io.Writer) error {
 		return err
 	}
 	var allErrors []error
-	for cluster, result := range results {
+	clusters := sortedClusterNames(results)
+	for _, cluster := range clusters {
+		result := results[cluster]
 		if p.isClustered() {
 			_, _ = fmt.Fprintf(out, "Cluster %q: ", cluster)
 		}
@@ -453,8 +469,8 @@ func (p *Preview) TestJSON(ctx context.Context, path string) (*TestResult, error
 		}, err
 	}
 	var warnings []TestIssue
-	for _, result := range results {
-		for _, e := range result.errors {
+	for _, cluster := range sortedClusterNames(results) {
+		for _, e := range results[cluster].errors {
 			warnings = append(warnings, TestIssue{Message: e.Error()})
 		}
 	}
