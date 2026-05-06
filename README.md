@@ -47,11 +47,11 @@ Use it to catch risky changes before merge:
 
 Enable `html-report` in the GitHub Action to generate a browsable report artifact, or deploy it to GitHub Pages for direct links from pull requests.
 
-| Impact overview                                                                         | Unified resource diff                                                                        | Side-by-side diff                                                                                           |
-| --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Impact overview                                                                                     | Unified resource diff                                                                                    | Side-by-side diff                                                                                                       |
+| --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | [![HTML report overview](docs/assets/fmp-report-overview.png)](docs/assets/fmp-report-overview.png) | [![Unified diff view](docs/assets/fmp-report-unified-diff.png)](docs/assets/fmp-report-unified-diff.png) | [![Side-by-side diff view](docs/assets/fmp-report-side-by-side-diff.png)](docs/assets/fmp-report-side-by-side-diff.png) |
 
-Open the checked-in [sample HTML report](docs/examples/fmp-report-example.html) to try the single-file report locally.
+View the [sample HTML report in a browser](https://raw.githack.com/tobiash/flux-manifest-preview/main/docs/examples/fmp-report-example.html), or download the checked-in [single-file HTML report](docs/examples/fmp-report-example.html) to open it locally.
 
 The report includes:
 
