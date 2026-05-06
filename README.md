@@ -20,17 +20,17 @@ It is built for Kubernetes platform teams reviewing Flux pull requests where the
 
 Instead of asking “what YAML changed?”, `fmp` answers “what Kubernetes resources will change after Flux renders this repo?”
 
-```text
-Git branch / PR / local worktree
-        │
-        ▼
-Flux Kustomizations + HelmReleases + GitRepository sources
-        │
-        ▼
-Rendered Kubernetes manifests
-        │
-        ▼
-Diffs, summaries, policies, labels, exported manifests, HTML report
+```mermaid
+flowchart TD
+    A[Git branch, PR, or local worktree] --> B[Flux Kustomizations]
+    B --> C[HelmReleases]
+    B --> D[External GitRepository sources]
+    C --> E[Rendered Kubernetes manifests]
+    D --> E
+    E --> F[CLI diffs and summaries]
+    E --> G[Policy checks and PR labels]
+    E --> H[Exported manifests]
+    E --> I[Interactive HTML report]
 ```
 
 Use it to catch risky changes before merge:
