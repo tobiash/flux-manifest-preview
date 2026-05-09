@@ -5,23 +5,41 @@
 	const app = document.getElementById("app");
 	const filters = {
 		query: "",
-		action: "",
-		kind: "",
-		namespace: "",
-		cluster: "",
-		producer: "",
 	};
+	const queryFilterKeys = new Set([
+		"action",
+		"kind",
+		"namespace",
+		"cluster",
+		"producer",
+		"apiVersion",
+	]);
 	let focusedIndex = -1;
+	let activeSuggestion = -1;
 
 	function el(tag, attrs = {}, children = []) {
 		const node = document.createElement(tag);
 		for (const [key, value] of Object.entries(attrs)) {
 			if (key === "class") node.className = value;
 			else if (key === "text") node.textContent = value;
+			else if (key === "hidden") node.hidden = value;
 			else node.setAttribute(key, value);
 		}
 		for (const child of children) node.append(child);
 		return node;
+	}
+
+	function fieldLabel(text, control) {
+		return el("label", { class: "field" }, [
+			el("span", { class: "sr-only", text }),
+			control,
+		]);
+	}
+
+	function actionButton(text, onClick, className = "") {
+		const button = el("button", { class: className, text, type: "button" });
+		button.addEventListener("click", onClick);
+		return button;
 	}
 
 	function route() {
@@ -102,7 +120,7 @@
 	function metric(kind, value, label, action) {
 		const href =
 			action !== undefined
-				? `#resources${action ? "?action=" + action : ""}`
+				? `#resources${action ? "?query=" + encodeURIComponent("action:" + action) : ""}`
 				: null;
 		if (href)
 			return el("a", { href, class: `metric ${kind}` }, [
@@ -145,7 +163,7 @@
 		const policyGroups = groupPolicySignalsByCluster(policySignals());
 		for (const [cluster, row] of rows) {
 			const clusterLabel = cluster || "(default)";
-			const href = `#resources?cluster=${encodeURIComponent(cluster || "default")}`;
+			const href = `#resources?query=${encodeURIComponent("cluster:" + (cluster || "default"))}`;
 			const children = [
 				el("div", { class: "card-title" }, [
 					el("strong", { text: clusterLabel }),
@@ -309,11 +327,8 @@
 
 	function renderResources(params) {
 		if (params) {
-			filters.action = params.get("action") || "";
-			filters.kind = params.get("kind") || "";
-			filters.namespace = params.get("namespace") || "";
-			filters.cluster = params.get("cluster") || "";
-			filters.producer = params.get("producer") || "";
+			filters.query = resourceQueryFromParams(params);
+			if (!params.get("query") && filters.query) syncResourceFiltersToHash();
 		}
 		app.replaceChildren();
 		app.append(
@@ -326,7 +341,10 @@
 
 	function renderFilteredList() {
 		let list = app.querySelector(".resource-list");
-		if (list) list.replaceChildren();
+		if (list) {
+			list.classList.add("no-animate");
+			list.replaceChildren();
+		}
 		else {
 			list = el("div", { class: "resource-list" });
 			app.append(list);
@@ -343,40 +361,56 @@
 		const count = app.querySelector(".filter-count");
 		if (count)
 			count.textContent = `${rows.length} of ${data.resources.length} resources`;
+		const clear = app.querySelector(".clear-filters");
+		if (clear) clear.hidden = !hasActiveFilters();
 		focusedIndex = -1;
 	}
 
 	function filterBar() {
 		const bar = el("div", { class: "filterbar" });
 		const search = el("input", {
-			placeholder: "Search name, namespace, kind, producer",
+			id: "filter-query",
+			name: "query",
+			"aria-label": "Search resources",
+			"aria-autocomplete": "list",
+			"aria-controls": "query-suggestions",
+			autocomplete: "off",
+			placeholder: "Search resources, e.g. podinfo cluster:staging action:modified",
 			value: filters.query,
+		});
+		const suggestions = el("div", {
+			id: "query-suggestions",
+			class: "query-suggestions",
+			"aria-label": "Search suggestions",
+			role: "listbox",
+			hidden: true,
 		});
 		search.addEventListener("input", () => {
 			filters.query = search.value;
+			syncResourceFiltersToHash();
 			renderFilteredList();
+			renderSuggestions(search, suggestions);
 		});
+		search.addEventListener("focus", () => renderSuggestions(search, suggestions));
+		search.addEventListener("blur", () => {
+			setTimeout(() => {
+				suggestions.hidden = true;
+			}, 120);
+		});
+		search.addEventListener("keydown", (event) => {
+			handleSuggestionKeydown(event, search, suggestions);
+		});
+		const clear = actionButton("Clear filters", () => {
+			clearFilters();
+			renderResources(new URLSearchParams());
+		}, "clear-filters");
+		clear.hidden = !hasActiveFilters();
 		bar.append(
-			search,
-			select(
-				"action",
-				[""].concat(unique(data.resources.map((r) => r.action))),
-			),
-			select("kind", [""].concat(unique(data.resources.map((r) => r.kind)))),
-			select(
-				"namespace",
-				[""].concat(
-					unique(data.resources.map((r) => r.namespace || "cluster-scoped")),
-				),
-			),
-			select(
-				"cluster",
-				[""].concat(unique(data.resources.map((r) => r.cluster || "default"))),
-			),
-			select(
-				"producer",
-				[""].concat(unique(data.resources.map((r) => r.producer || "unknown"))),
-			),
+			el("div", { class: "search-field" }, [
+				fieldLabel("Search resources", search),
+				suggestions,
+			]),
+			clear,
 			el("span", {
 				class: "filter-count",
 				text: `${filteredResources().length} of ${data.resources.length} resources`,
@@ -385,16 +419,153 @@
 		return bar;
 	}
 
-	function select(key, values) {
-		const node = el("select");
-		for (const value of values)
-			node.append(el("option", { value, text: value || `All ${key}s` }));
-		node.value = filters[key];
-		node.addEventListener("change", () => {
-			filters[key] = node.value;
-			renderFilteredList();
-		});
-		return node;
+	function hasActiveFilters() {
+		return filters.query.trim() !== "";
+	}
+
+	function clearFilters() {
+		filters.query = "";
+		syncResourceFiltersToHash();
+	}
+
+	function syncResourceFiltersToHash() {
+		const params = new URLSearchParams();
+		if (filters.query.trim()) params.set("query", filters.query.trim());
+		const query = params.toString();
+		const next = `#resources${query ? "?" + query : ""}`;
+		if (location.hash !== next) history.replaceState(null, "", next);
+	}
+
+	function resourceQueryFromParams(params) {
+		const query = params.get("query");
+		if (query) return query;
+		const parts = [];
+		for (const key of queryFilterKeys) {
+			const value = params.get(key);
+			if (value) parts.push(`${key}:${value}`);
+		}
+		return parts.join(" ");
+	}
+
+	function renderSuggestions(input, panel) {
+		const suggestions = querySuggestions(input.value, input.selectionStart || input.value.length);
+		activeSuggestion = -1;
+		panel.replaceChildren();
+		panel.hidden = suggestions.length === 0;
+		for (const [index, suggestion] of suggestions.entries()) {
+			const option = el("button", {
+				class: "query-suggestion",
+				role: "option",
+				type: "button",
+				"data-index": String(index),
+			});
+			option.append(
+				el("span", { class: "suggestion-label", text: suggestion.label }),
+				el("span", { class: "suggestion-detail", text: suggestion.detail }),
+			);
+			option.addEventListener("mousedown", (event) => event.preventDefault());
+			option.addEventListener("click", () => applySuggestion(input, panel, suggestion));
+			panel.append(option);
+		}
+	}
+
+	function handleSuggestionKeydown(event, input, panel) {
+		const options = [...panel.querySelectorAll(".query-suggestion")];
+		if (panel.hidden || options.length === 0) return;
+		if (event.key === "ArrowDown") {
+			event.preventDefault();
+			event.stopPropagation();
+			activeSuggestion = Math.min(activeSuggestion + 1, options.length - 1);
+			markActiveSuggestion(options);
+		} else if (event.key === "ArrowUp") {
+			event.preventDefault();
+			event.stopPropagation();
+			activeSuggestion = Math.max(activeSuggestion - 1, 0);
+			markActiveSuggestion(options);
+		} else if (event.key === "Enter" && activeSuggestion >= 0) {
+			event.preventDefault();
+			event.stopPropagation();
+			options[activeSuggestion].click();
+		} else if (event.key === "Escape") {
+			event.stopPropagation();
+			panel.hidden = true;
+		}
+	}
+
+	function markActiveSuggestion(options) {
+		for (const [index, option] of options.entries()) {
+			option.classList.toggle("active", index === activeSuggestion);
+			option.setAttribute("aria-selected", String(index === activeSuggestion));
+		}
+	}
+
+	function querySuggestions(query, cursor) {
+		const current = currentQueryToken(query, cursor);
+		const raw = current.value.toLowerCase();
+		if (!raw) return [];
+		const separator = raw.indexOf(":");
+		if (separator >= 0) {
+			const key = normalizeFilterKey(raw.slice(0, separator));
+			const prefix = raw.slice(separator + 1);
+			if (!queryFilterKeys.has(key)) return [];
+			return filterValues(key)
+				.filter((value) => {
+					const normalized = value.toLowerCase();
+					return normalized.startsWith(prefix) && normalized !== prefix;
+				})
+				.slice(0, 8)
+				.map((value) => ({
+					label: `${key}:${value}`,
+					detail: "filter value",
+					value: `${key}:${value}`,
+					start: current.start,
+					end: current.end,
+				}));
+		}
+		return [...queryFilterKeys]
+			.filter((key) => key.toLowerCase().startsWith(raw))
+			.slice(0, 8)
+			.map((key) => ({
+				label: `${key}:`,
+				detail: "filter key",
+				value: `${key}:`,
+				start: current.start,
+				end: current.end,
+			}));
+	}
+
+	function applySuggestion(input, panel, suggestion) {
+		const before = input.value.slice(0, suggestion.start);
+		const after = input.value.slice(suggestion.end).replace(/^\s+/, "");
+		const suffix = suggestion.value.endsWith(":") ? "" : " ";
+		const spacer = after ? " " : "";
+		filters.query = `${before}${suggestion.value}${suffix}${spacer}${after}`.replace(/\s+$/, suffix);
+		input.value = filters.query;
+		const nextCursor = before.length + suggestion.value.length + suffix.length;
+		input.setSelectionRange(nextCursor, nextCursor);
+		syncResourceFiltersToHash();
+		renderFilteredList();
+		renderSuggestions(input, panel);
+		input.focus();
+	}
+
+	function currentQueryToken(query, cursor) {
+		let start = cursor;
+		while (start > 0 && !/\s/.test(query[start - 1])) start--;
+		let end = cursor;
+		while (end < query.length && !/\s/.test(query[end])) end++;
+		return { start, end, value: query.slice(start, end) };
+	}
+
+	function filterValues(key) {
+		return unique(
+			data.resources.map((resource) => {
+				if (key === "namespace") return resource.namespace || "cluster-scoped";
+				if (key === "cluster") return resource.cluster || "default";
+				if (key === "producer") return resource.producer || "unknown";
+				return resource[key] || "";
+			}),
+		);
 	}
 
 	function unique(values) {
@@ -404,19 +575,83 @@
 	}
 
 	function filteredResources() {
+		const parsed = parseResourceQuery(filters.query);
 		return data.resources.filter((r) => {
 			const haystack =
-				`${r.name} ${r.namespace || "cluster-scoped"} ${r.kind} ${r.cluster || "default"} ${r.producer || ""}`.toLowerCase();
+				`${r.name} ${r.namespace || "cluster-scoped"} ${r.kind} ${r.cluster || "default"} ${r.producer || ""} ${r.action} ${r.apiVersion || ""}`.toLowerCase();
 			return (
-				(!filters.query || haystack.includes(filters.query)) &&
-				(!filters.action || r.action === filters.action) &&
-				(!filters.kind || r.kind === filters.kind) &&
-				(!filters.namespace ||
-					(r.namespace || "cluster-scoped") === filters.namespace) &&
-				(!filters.cluster || (r.cluster || "default") === filters.cluster) &&
-				(!filters.producer || (r.producer || "unknown") === filters.producer)
+				parsed.terms.every((term) => haystack.includes(term.value)) &&
+				parsed.filters.every((filter) =>
+					resourceFieldValue(r, filter.key).includes(filter.value),
+				)
 			);
 		});
+	}
+
+	function parseResourceQuery(query) {
+		const tokens = tokenizeQuery(query);
+		const parsed = { terms: [], filters: [] };
+		for (const [index, token] of tokens.entries()) {
+			const trimmed = token.trim();
+			const separator = token.indexOf(":");
+			if (separator > 0) {
+				const key = normalizeFilterKey(token.slice(0, separator));
+				const value = token.slice(separator + 1).trim().toLowerCase();
+				if (queryFilterKeys.has(key) && !value) continue;
+				if (queryFilterKeys.has(key) && value) {
+					parsed.filters.push({ index, key, value, raw: token });
+					continue;
+				}
+			}
+			if (isPartialFilterKey(trimmed)) continue;
+			if (trimmed) parsed.terms.push({ index, value: trimmed.toLowerCase(), raw: token });
+		}
+		return parsed;
+	}
+
+	function isPartialFilterKey(token) {
+		const normalized = token.toLowerCase();
+		if (!normalized) return false;
+		return [...queryFilterKeys].some((key) => key.toLowerCase().startsWith(normalized));
+	}
+
+	function tokenizeQuery(query) {
+		const tokens = [];
+		let token = "";
+		let quote = "";
+		for (const char of query.trim()) {
+			if ((char === '"' || char === "'") && !quote) {
+				quote = char;
+				continue;
+			}
+			if (char === quote) {
+				quote = "";
+				continue;
+			}
+			if (/\s/.test(char) && !quote) {
+				if (token) tokens.push(token);
+				token = "";
+				continue;
+			}
+			token += char;
+		}
+		if (token) tokens.push(token);
+		return tokens;
+	}
+
+	function normalizeFilterKey(key) {
+		const normalized = key.toLowerCase();
+		if (normalized === "api" || normalized === "apiversion") {
+			return "apiVersion";
+		}
+		return normalized;
+	}
+
+	function resourceFieldValue(resource, key) {
+		if (key === "namespace") return (resource.namespace || "cluster-scoped").toLowerCase();
+		if (key === "cluster") return (resource.cluster || "default").toLowerCase();
+		if (key === "producer") return (resource.producer || "unknown").toLowerCase();
+		return String(resource[key] || "").toLowerCase();
 	}
 
 	function sparkline(res) {
@@ -484,7 +719,7 @@
 	}
 
 	function copyButton(res) {
-		const btn = el("button", { class: "copy-btn", text: "Copy diff" });
+		const btn = el("button", { class: "copy-btn", text: "Copy diff", type: "button" });
 		btn.addEventListener("click", () => {
 			const lines = res.diffRows.map((row) => {
 				if (row.type === "hunk") return row.oldText;
@@ -492,16 +727,51 @@
 					row.type === "added" ? "+" : row.type === "deleted" ? "-" : " ";
 				return sign + (row.type === "added" ? row.newText : row.oldText);
 			});
-			navigator.clipboard.writeText(lines.join("\n")).then(() => {
-				btn.textContent = "Copied";
-				btn.classList.add("copied");
-				setTimeout(() => {
-					btn.textContent = "Copy diff";
-					btn.classList.remove("copied");
-				}, 1500);
-			});
+			copyText(btn, lines.join("\n"), "Copy diff");
 		});
 		return btn;
+	}
+
+	function copyLinkButton(index, view) {
+		const btn = el("button", { class: "copy-btn", text: "Copy link", type: "button" });
+		btn.addEventListener("click", () => {
+			copyText(btn, resourceURL(index, view), "Copy link");
+		});
+		return btn;
+	}
+
+	function resourceURL(index, view) {
+		const url = new URL(location.href);
+		url.hash = `resource/${index}?view=${view}`;
+		return url.href;
+	}
+
+	function copyText(button, text, resetText) {
+		writeClipboard(text).then(() => {
+			button.textContent = "Copied";
+			button.classList.add("copied");
+			setTimeout(() => {
+				button.textContent = resetText;
+				button.classList.remove("copied");
+			}, 1500);
+		});
+	}
+
+	function writeClipboard(text) {
+		if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
+		const textarea = el("textarea");
+		textarea.value = text;
+		textarea.setAttribute("readonly", "");
+		textarea.style.position = "fixed";
+		textarea.style.left = "-9999px";
+		document.body.append(textarea);
+		textarea.select();
+		try {
+			document.execCommand("copy");
+			return Promise.resolve();
+		} finally {
+			textarea.remove();
+		}
 	}
 
 	function renderResource(index, view) {
@@ -526,7 +796,9 @@
 					}),
 				]),
 				el("div", { class: "detail-actions" }, [
+					resourceNav(index),
 					diffToggle(index, view),
+					copyLinkButton(index, view),
 					copyButton(res),
 				]),
 			]),
@@ -535,12 +807,28 @@
 		);
 	}
 
+	function resourceNav(index) {
+		const previous =
+			index > 0
+				? el("a", { href: `#resource/${index - 1}`, text: "Previous" })
+				: el("span", { text: "Previous", "aria-disabled": "true" });
+		const next =
+			index < data.resources.length - 1
+				? el("a", { href: `#resource/${index + 1}`, text: "Next" })
+				: el("span", { text: "Next", "aria-disabled": "true" });
+		return el("div", { class: "resource-nav", "aria-label": "Resource navigation" }, [
+			previous,
+			next,
+		]);
+	}
+
 	function diffToggle(index, view) {
 		const toggle = el("div", { class: "toggle" });
 		for (const mode of ["unified", "split"]) {
 			const button = el("button", {
 				class: view === mode ? "active" : "",
 				text: mode === "split" ? "Split" : "Unified",
+				type: "button",
 			});
 			button.addEventListener("click", () => {
 				location.hash = `resource/${index}?view=${mode}`;
@@ -611,6 +899,7 @@
 	}
 
 	function handleKeydown(e) {
+		if (["INPUT", "SELECT", "TEXTAREA", "BUTTON"].includes(e.target.tagName)) return;
 		const cards = () => [...app.querySelectorAll(".resource-card")];
 		const r = route();
 
