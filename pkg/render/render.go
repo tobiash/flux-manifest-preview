@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strings"
 
 	"github.com/go-logr/logr"
 	"sigs.k8s.io/kustomize/api/krusty"
@@ -15,6 +17,8 @@ import (
 )
 
 const ProducerAnnotation = "fmp.tobiash.github.io/producer"
+
+var postBuildSubstitutionPattern = regexp.MustCompile(`\$\{([^}]+)\}`)
 
 // Provenance identifies the Flux rendering source that produced a resource.
 type Provenance struct {
@@ -241,6 +245,57 @@ func (r *Render) MarkProvenanceToNew(count int, producer string) {
 	for _, res := range r.Resources()[count:] {
 		r.provenance[res.CurId().String()] = provenanceForResource(res, TextProvenance(producer))
 	}
+}
+
+// ApplySubstitutionsToNew applies Flux postBuild inline substitutions to
+// resources added after count. Missing variables are intentionally preserved so
+// the report still shows unresolved substituteFrom or strict-mode inputs.
+func (r *Render) ApplySubstitutionsToNew(count int, producer string, substitutions map[string]string) error {
+	if len(substitutions) == 0 {
+		return nil
+	}
+
+	newResources := append([]*resource.Resource(nil), r.Resources()[count:]...)
+	for _, res := range newResources {
+		delete(r.provenance, res.CurId().String())
+		if err := r.Remove(res.CurId()); err != nil {
+			return err
+		}
+	}
+
+	for _, res := range newResources {
+		yaml := applyPostBuildSubstitutions(res.MustYaml(), substitutions)
+		resources, err := resmap.NewFactory(resource.NewFactory(nil)).NewResMapFromBytes([]byte(yaml))
+		if err != nil {
+			return fmt.Errorf("applying postBuild substitutions to %s: %w", res.CurId(), err)
+		}
+		if err := r.absorbResMap("postBuild substitutions", producer, resources); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func applyPostBuildSubstitutions(input string, substitutions map[string]string) string {
+	return postBuildSubstitutionPattern.ReplaceAllStringFunc(input, func(token string) string {
+		expr := token[2 : len(token)-1]
+		if key, fallback, ok := strings.Cut(expr, ":="); ok {
+			if value, exists := substitutions[key]; exists && value != "" {
+				return value
+			}
+			return fallback
+		}
+		if key, fallback, ok := strings.Cut(expr, ":-"); ok {
+			if value, exists := substitutions[key]; exists && value != "" {
+				return value
+			}
+			return fallback
+		}
+		if value, ok := substitutions[expr]; ok {
+			return value
+		}
+		return token
+	})
 }
 
 // ProvenanceForID returns the structured provenance for a resource ID.

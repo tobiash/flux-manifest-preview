@@ -75,6 +75,9 @@ func (g fluxRenderGraph) renderPath(path expander.DiscoveredPath) error {
 			return fmt.Errorf("failed to add path %s: %w", full, err)
 		}
 	}
+	if err := g.loader.render.ApplySubstitutionsToNew(count, producer, path.Substitutions); err != nil {
+		return fmt.Errorf("failed to apply postBuild substitutions for path %s: %w", full, err)
+	}
 	if path.Namespace != "" {
 		g.loader.render.ApplyNamespaceToNew(count, path.Namespace)
 	}

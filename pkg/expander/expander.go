@@ -22,6 +22,8 @@ type DiscoveredPath struct {
 	Namespace string
 	// Producer describes the Flux object or path that caused this path to be rendered.
 	Producer string
+	// Substitutions contains Flux postBuild inline substitutions for this path.
+	Substitutions map[string]string
 }
 
 // ExpandResult holds the output of an expander.

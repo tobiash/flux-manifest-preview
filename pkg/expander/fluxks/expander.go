@@ -74,6 +74,12 @@ func (e *Expander) Expand(_ context.Context, r *render.Render) (*expander.Expand
 		if ks.Spec.TargetNamespace != "" {
 			dp.Namespace = ks.Spec.TargetNamespace
 		}
+		if ks.Spec.PostBuild != nil && len(ks.Spec.PostBuild.Substitute) > 0 {
+			dp.Substitutions = make(map[string]string, len(ks.Spec.PostBuild.Substitute))
+			for key, value := range ks.Spec.PostBuild.Substitute {
+				dp.Substitutions[key] = value
+			}
+		}
 
 		if e.resolver != nil && ks.Spec.SourceRef.Kind == "GitRepository" {
 			ns := ks.Spec.SourceRef.Namespace

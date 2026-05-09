@@ -132,6 +132,37 @@ metadata:
 	}
 }
 
+func TestApplySubstitutionsToNew(t *testing.T) {
+	r := newRenderFromYAML(t, `apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ${APP}
+  namespace: default
+spec:
+  accessModes:
+  - ${VOLSYNC_ACCESSMODES:-ReadWriteOnce}
+`)
+
+	if err := r.ApplySubstitutionsToNew(0, "Kustomization flux-system/obico", map[string]string{"APP": "obico"}); err != nil {
+		t.Fatalf("ApplySubstitutionsToNew() error = %v", err)
+	}
+
+	resources := r.Resources()
+	if len(resources) != 1 {
+		t.Fatalf("expected 1 resource, got %d", len(resources))
+	}
+	if got, want := resources[0].GetName(), "obico"; got != want {
+		t.Fatalf("name = %q, want %q", got, want)
+	}
+	yaml := resources[0].MustYaml()
+	if strings.Contains(yaml, "${APP}") {
+		t.Fatalf("expected APP substitution, got:\n%s", yaml)
+	}
+	if !strings.Contains(yaml, "ReadWriteOnce") {
+		t.Fatalf("expected default substitution, got:\n%s", yaml)
+	}
+}
+
 func checkOrder(t *testing.T, resources []*resource.Resource, idx int, kind, namespace, name string) {
 	t.Helper()
 	res := resources[idx]

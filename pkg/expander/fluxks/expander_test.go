@@ -21,6 +21,9 @@ spec:
   path: ./clusters/prod
   prune: true
   targetNamespace: apps
+  postBuild:
+    substitute:
+      APP: podinfo
   sourceRef:
     kind: GitRepository
     name: flux-system
@@ -43,6 +46,9 @@ spec:
 	}
 	if got, want := dp.Producer, "Kustomization flux-system/apps"; got != want {
 		t.Fatalf("Producer = %q, want %q", got, want)
+	}
+	if got, want := dp.Substitutions["APP"], "podinfo"; got != want {
+		t.Fatalf("Substitutions[APP] = %q, want %q", got, want)
 	}
 }
 
