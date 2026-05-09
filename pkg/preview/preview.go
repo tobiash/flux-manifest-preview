@@ -18,7 +18,6 @@ import (
 	helmexpander "github.com/tobiash/flux-manifest-preview/pkg/expander/helm"
 	"github.com/tobiash/flux-manifest-preview/pkg/filter"
 	"github.com/tobiash/flux-manifest-preview/pkg/render"
-	"golang.org/x/sync/errgroup"
 	"gopkg.in/yaml.v3"
 	helmcli "helm.sh/helm/v4/pkg/cli"
 )
@@ -241,27 +240,17 @@ func (p *Preview) Diff(ctx context.Context, a, b string, out io.Writer) error {
 		return err
 	}
 
-	g, _ := errgroup.WithContext(ctx)
-	var ar, br *loadRepoResult
-	g.Go(func() error {
-		results, err := p.freshLoadRepo(ctx, a)
-		if err != nil {
-			return err
-		}
-		ar = results[""]
-		return nil
-	})
-	g.Go(func() error {
-		results, err := p.freshLoadRepo(ctx, b)
-		if err != nil {
-			return err
-		}
-		br = results[""]
-		return nil
-	})
-	if err := g.Wait(); err != nil {
+	// Load sequentially because configured KIO filters may carry mutable state.
+	arResults, err := p.freshLoadRepo(ctx, a)
+	if err != nil {
 		return fmt.Errorf("render error: %w", err)
 	}
+	brResults, err := p.freshLoadRepo(ctx, b)
+	if err != nil {
+		return fmt.Errorf("render error: %w", err)
+	}
+	ar := arResults[""]
+	br := brResults[""]
 
 	if p.helmReleaseName != "" {
 		ar.render.FilterByLabel("helm.toolkit.fluxcd.io/name", p.helmReleaseName)
@@ -291,19 +280,13 @@ func (p *Preview) Diff(ctx context.Context, a, b string, out io.Writer) error {
 // DiffResult computes and writes the diff between two repository paths,
 // returning structured change metadata alongside the rendered diff text.
 func (p *Preview) DiffResult(ctx context.Context, a, b string, out io.Writer) (*diff.DiffResult, error) {
-	g, _ := errgroup.WithContext(ctx)
-	var ar, br map[string]*loadRepoResult
-	g.Go(func() error {
-		var err error
-		ar, err = p.freshLoadRepo(ctx, a)
-		return err
-	})
-	g.Go(func() error {
-		var err error
-		br, err = p.freshLoadRepo(ctx, b)
-		return err
-	})
-	if err := g.Wait(); err != nil {
+	// Load sequentially because configured KIO filters may carry mutable state.
+	ar, err := p.freshLoadRepo(ctx, a)
+	if err != nil {
+		return nil, fmt.Errorf("render error: %w", err)
+	}
+	br, err := p.freshLoadRepo(ctx, b)
+	if err != nil {
 		return nil, fmt.Errorf("render error: %w", err)
 	}
 
