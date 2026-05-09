@@ -9,6 +9,7 @@ import (
 type ReportInput struct {
 	Result             *diff.DiffResult
 	PolicyResult       *policy.Result
+	Warnings           []string
 	FullDiff           string
 	MaxInlineDiffBytes int
 	DiffPreviewLines   int
@@ -24,8 +25,9 @@ func BuildReport(input ReportInput) *ActionReport {
 
 	preview, truncated := TruncateDiff(input.FullDiff, input.MaxInlineDiffBytes, input.DiffPreviewLines)
 	report := &ActionReport{
-		Status:            StatusFromCounts(summary.Total > 0, 0, 0),
+		Status:            StatusFromCounts(summary.Total > 0, len(input.Warnings), 0),
 		Changed:           summary.Total > 0,
+		Warnings:          input.Warnings,
 		DiffBytes:         len(input.FullDiff),
 		DiffTruncated:     truncated,
 		DiffPreview:       preview,

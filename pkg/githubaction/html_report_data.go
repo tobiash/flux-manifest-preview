@@ -20,12 +20,13 @@ type HTMLReportData struct {
 }
 
 type HTMLReportMeta struct {
-	Status        string `json:"status"`
-	GeneratedAt   string `json:"generatedAt"`
-	Base          string `json:"base"`
-	Target        string `json:"target"`
-	DiffBytes     int    `json:"diffBytes"`
-	DiffTruncated bool   `json:"diffTruncated"`
+	Status        string   `json:"status"`
+	GeneratedAt   string   `json:"generatedAt"`
+	Base          string   `json:"base"`
+	Target        string   `json:"target"`
+	Warnings      []string `json:"warnings,omitempty"`
+	DiffBytes     int      `json:"diffBytes"`
+	DiffTruncated bool     `json:"diffTruncated"`
 }
 
 type HTMLReportSummary struct {
@@ -76,6 +77,7 @@ func BuildHTMLReportData(req *Request, report *ActionReport, result *fmpdiff.Dif
 			GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
 			Base:          req.DiffLeft(),
 			Target:        req.DiffRight(),
+			Warnings:      report.Warnings,
 			DiffBytes:     report.DiffBytes,
 			DiffTruncated: report.DiffTruncated,
 		},

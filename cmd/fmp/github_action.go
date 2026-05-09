@@ -224,6 +224,7 @@ func executeAction(log logr.Logger, req *githubaction.Request) (*githubaction.Ac
 	report := githubaction.BuildReport(githubaction.ReportInput{
 		Result:             run.Result,
 		PolicyResult:       run.PolicyResult,
+		Warnings:           run.Warnings,
 		FullDiff:           run.DiffText,
 		MaxInlineDiffBytes: req.MaxInlineDiffBytes,
 		DiffPreviewLines:   req.DiffPreviewLines,

@@ -85,6 +85,7 @@
 			summaryGrid(),
 		);
 		app.append(actionLinks());
+		renderWarningSection();
 		renderClusterSection();
 		renderSingleClusterPolicySignals();
 		renderKindSection();
@@ -180,6 +181,25 @@
 			grid.append(el("a", { class: "card cluster-card", href }, children));
 		}
 		app.append(grid);
+	}
+
+	function renderWarningSection() {
+		const warnings = data.meta.warnings || [];
+		if (warnings.length === 0) return;
+		app.append(el("h2", { text: "Warnings" }));
+		const list = el("div", { class: "warning-list" });
+		for (const warning of warnings) {
+			list.append(
+				el("div", { class: "card warning-card" }, [
+					el("div", { class: "card-title" }, [
+						el("strong", { text: "Partial render" }),
+						el("span", { class: "pill policy-signal warning", text: "warning" }),
+					]),
+					el("small", { text: warning }),
+				]),
+			);
+		}
+		app.append(list);
 	}
 
 	function renderSingleClusterPolicySignals() {

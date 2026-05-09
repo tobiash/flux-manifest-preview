@@ -3,6 +3,7 @@ package preview
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -25,6 +26,7 @@ type DiffRunResult struct {
 	Result       *diff.DiffResult
 	Summary      diff.ResultSummary
 	DiffText     string
+	Warnings     []string
 	PolicyResult *policy.Result
 }
 
@@ -33,7 +35,10 @@ func (p *Preview) RunDiff(ctx context.Context, opts DiffRunOptions) (*DiffRunRes
 	var diffText bytes.Buffer
 	result, err := p.DiffResult(ctx, opts.LeftPath, opts.RightPath, &diffText)
 	if err != nil {
-		return nil, err
+		var expansionErr *ExpansionError
+		if !errors.As(err, &expansionErr) || result == nil {
+			return nil, err
+		}
 	}
 	if opts.DiffWriter != nil {
 		if _, err := io.Copy(opts.DiffWriter, bytes.NewReader(diffText.Bytes())); err != nil {
@@ -41,6 +46,7 @@ func (p *Preview) RunDiff(ctx context.Context, opts DiffRunOptions) (*DiffRunRes
 		}
 	}
 
+	warnings := expansionWarnings(err)
 	var policyResult *policy.Result
 	if opts.Policies != nil {
 		policyResult, err = policy.Evaluate(ctx, result, opts.Policies, opts.PolicyBaseDir)
@@ -53,6 +59,28 @@ func (p *Preview) RunDiff(ctx context.Context, opts DiffRunOptions) (*DiffRunRes
 		Result:       result,
 		Summary:      result.Summary(),
 		DiffText:     diffText.String(),
+		Warnings:     warnings,
 		PolicyResult: policyResult,
 	}, nil
+}
+
+func expansionWarnings(err error) []string {
+	var expansionErr *ExpansionError
+	if !errors.As(err, &expansionErr) {
+		return nil
+	}
+	warnings := make([]string, 0, len(expansionErr.Errors)+len(expansionErr.Warnings))
+	seen := make(map[string]struct{})
+	for _, issue := range append(expansionErr.Errors, expansionErr.Warnings...) {
+		if issue == nil {
+			continue
+		}
+		msg := issue.Error()
+		if _, ok := seen[msg]; ok {
+			continue
+		}
+		seen[msg] = struct{}{}
+		warnings = append(warnings, msg)
+	}
+	return warnings
 }

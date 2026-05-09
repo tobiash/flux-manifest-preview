@@ -249,6 +249,13 @@ a.metric:hover {
 	gap: 10px;
 	grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
 }
+.warning-list {
+	display: grid;
+	gap: 10px;
+}
+.warning-card {
+	border-color: color-mix(in srgb, var(--modified) 45%, var(--border));
+}
 a.cluster-card {
 	color: inherit;
 	text-decoration: none;
