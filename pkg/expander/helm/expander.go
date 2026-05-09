@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	fluxchartutil "github.com/fluxcd/pkg/chartutil"
@@ -38,7 +39,7 @@ var (
 // but the fields we read are compatible enough to decode into the current
 // public API structs directly.
 func matchGVK(resGvk resid.Gvk, target resid.Gvk) bool {
-	return resGvk.Group == target.Group && resGvk.Kind == target.Kind
+	return render.MatchGVK(resGvk, target)
 }
 
 type chartRunner interface {
@@ -58,7 +59,27 @@ type Expander struct {
 	resolver chartSourceResolver
 	logger   logr.Logger
 	scheme   *runtime.Scheme
-	expanded map[string]bool // "namespace/name" of already-expanded releases
+	seen     releaseTracker
+}
+
+type releaseTracker struct {
+	mu       sync.Mutex
+	expanded map[string]bool
+}
+
+func (t *releaseTracker) claim(namespace, name string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.expanded == nil {
+		t.expanded = make(map[string]bool)
+	}
+	key := namespace + "/" + name
+	if t.expanded[key] {
+		return false
+	}
+	t.expanded[key] = true
+	return true
 }
 
 // expandState holds per-invocation state for a single Expand call.
@@ -89,10 +110,6 @@ func NewExpander(runner *Runner, resolver chartSourceResolver, log logr.Logger) 
 // from the render, then delegates chart rendering to the Runner.
 func (e *Expander) Expand(ctx context.Context, r *render.Render) (*expander.ExpandResult, error) {
 
-	if e.expanded == nil {
-		e.expanded = make(map[string]bool)
-	}
-
 	s := &expandState{
 		runner:   e.runner,
 		resolver: e.resolver,
@@ -111,12 +128,10 @@ func (e *Expander) Expand(ctx context.Context, r *render.Render) (*expander.Expa
 			if err != nil {
 				return nil, fmt.Errorf("error parsing HelmRelease: %w", err)
 			}
-			key := release.Namespace + "/" + release.Name
-			if e.expanded[key] {
+			if !e.seen.claim(release.Namespace, release.Name) {
 				s.logger.V(1).Info("skipping already-expanded HelmRelease", "name", release.Name, "namespace", release.Namespace)
 				continue
 			}
-			e.expanded[key] = true
 			s.logger.V(1).Info("found helm release", "name", release.Name, "namespace", release.Namespace)
 			s.releases = append(s.releases, release)
 		} else if matchGVK(gvk, helmRepoGVK) {
@@ -181,7 +196,7 @@ func (s *expandState) renderAllCharts(ctx context.Context) (resmap.ResMap, []err
 		if err != nil {
 			return nil, nil, fmt.Errorf("error composing values for %s/%s: %w", h.Namespace, h.Name, err)
 		}
-		src, err := s.findChartUrl(h)
+		src, err := s.findChartURL(h)
 		if err != nil {
 			s.logger.V(1).Info("skipping HelmRelease, cannot resolve chart source", "name", h.Name, "namespace", h.Namespace, "error", err)
 			skipErrs = append(skipErrs, fmt.Errorf("HelmRelease %s/%s: %w", h.Namespace, h.Name, err))
@@ -254,7 +269,7 @@ type chartSource struct {
 	localPath string
 }
 
-func (s *expandState) findChartUrl(source *helmv2.HelmRelease) (chartSource, error) {
+func (s *expandState) findChartURL(source *helmv2.HelmRelease) (chartSource, error) {
 	if source.Spec.Chart == nil {
 		return chartSource{}, fmt.Errorf("HelmRelease %s/%s has no chart.spec.sourceRef", source.Namespace, source.Name)
 	}

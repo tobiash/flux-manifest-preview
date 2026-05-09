@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestDiscoverConfigPath_FindsFmpYaml(t *testing.T) {
+func TestDiscoverConfigPath_FindsFMPYAML(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, ".fmp.yaml", "sort: true\n")
 
@@ -17,7 +17,7 @@ func TestDiscoverConfigPath_FindsFmpYaml(t *testing.T) {
 	}
 }
 
-func TestDiscoverConfigPath_FindsFmpYml(t *testing.T) {
+func TestDiscoverConfigPath_FindsFMPYML(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, ".fmp.yml", "sort: true\n")
 
@@ -28,7 +28,7 @@ func TestDiscoverConfigPath_FindsFmpYml(t *testing.T) {
 	}
 }
 
-func TestDiscoverConfigPath_FindsGithubFmpYaml(t *testing.T) {
+func TestDiscoverConfigPath_FindsGitHubFMPYAML(t *testing.T) {
 	dir := t.TempDir()
 	mkdir(t, dir, ".github")
 	writeFile(t, dir, ".github/fmp.yaml", "sort: true\n")
@@ -52,7 +52,7 @@ func TestDiscoverConfigPath_PrefersRootConfig(t *testing.T) {
 	}
 }
 
-func TestDiscoverConfigPath_PrefersYamlOverYml(t *testing.T) {
+func TestDiscoverConfigPath_PrefersYAMLOverYML(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, ".fmp.yaml", "sort: true\n")
 	writeFile(t, dir, ".fmp.yml", "sort: false\n")

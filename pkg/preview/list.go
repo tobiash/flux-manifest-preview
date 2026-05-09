@@ -142,7 +142,7 @@ func extractHelmReleases(r *render.Render) []HelmReleaseInfo {
 }
 
 func matchListGVK(a, b resid.Gvk) bool {
-	return a.Group == b.Group && a.Kind == b.Kind
+	return render.MatchGVK(a, b)
 }
 
 // KustomizationsToJSON converts KustomizationInfo slices to a JSON-serializable envelope.

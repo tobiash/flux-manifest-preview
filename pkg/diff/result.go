@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"sort"
 
 	"github.com/go-logr/logr"
 	"github.com/tobiash/flux-manifest-preview/pkg/render"
@@ -47,6 +48,8 @@ type ResourceChange struct {
 	Action    string // added, deleted, modified
 	Old       map[string]any
 	New       map[string]any
+	oldYAML   string
+	newYAML   string
 }
 
 // DiffResult holds the structured result of a diff between two renders.
@@ -59,6 +62,51 @@ type DiffResult struct {
 // TotalChanged returns the total number of changed resources.
 func (r *DiffResult) TotalChanged() int {
 	return len(r.Added) + len(r.Deleted) + len(r.Modified)
+}
+
+// ChangeBreakdown holds added/modified/deleted counts for a category like kind.
+type ChangeBreakdown struct {
+	Added    int `json:"added"`
+	Modified int `json:"modified"`
+	Deleted  int `json:"deleted"`
+	Total    int `json:"total"`
+}
+
+// BuildBreakdown groups changes by the given key function and returns breakdown counts.
+func BuildBreakdown(result *DiffResult, keyFn func(ResourceChange) string) map[string]ChangeBreakdown {
+	breakdown := make(map[string]ChangeBreakdown)
+	for _, change := range result.Added {
+		key := keyFn(change)
+		entry := breakdown[key]
+		entry.Added++
+		entry.Total++
+		breakdown[key] = entry
+	}
+	for _, change := range result.Modified {
+		key := keyFn(change)
+		entry := breakdown[key]
+		entry.Modified++
+		entry.Total++
+		breakdown[key] = entry
+	}
+	for _, change := range result.Deleted {
+		key := keyFn(change)
+		entry := breakdown[key]
+		entry.Deleted++
+		entry.Total++
+		breakdown[key] = entry
+	}
+	return breakdown
+}
+
+// KindBreakdown returns change counts grouped by resource Kind.
+func KindBreakdown(result *DiffResult) map[string]ChangeBreakdown {
+	return BuildBreakdown(result, func(c ResourceChange) string { return c.Kind })
+}
+
+// ClusterBreakdown returns change counts grouped by cluster name.
+func ClusterBreakdown(result *DiffResult) map[string]ChangeBreakdown {
+	return BuildBreakdown(result, func(c ResourceChange) string { return c.Cluster })
 }
 
 // ByKind returns counts grouped by resource Kind.
@@ -107,9 +155,9 @@ func (r *DiffResult) ToJSON() *DiffResultJSON {
 	}
 	for _, c := range r.Modified {
 		var diffBuf bytes.Buffer
-		oldYaml := mustYamlMap(c.Old)
-		newYaml := mustYamlMap(c.New)
-		u := computeDiff(c.ID.String(), oldYaml, newYaml)
+		oldYAML := mustYAMLMap(c.Old)
+		newYAML := mustYAMLMap(c.New)
+		u := computeDiff(c.ID.String(), oldYAML, newYAML)
 		formatUnified(&diffBuf, u)
 		out.Modified = append(out.Modified, DiffChangeJSON{
 			ObjectRef: ObjectRef{
@@ -137,7 +185,7 @@ func gvkAPIVersion(group, version string) string {
 	return group + "/" + version
 }
 
-func mustYamlMap(m map[string]any) string {
+func mustYAMLMap(m map[string]any) string {
 	if m == nil {
 		return ""
 	}
@@ -151,6 +199,16 @@ func mustYamlMap(m map[string]any) string {
 // DiffWithResult computes a unified diff and returns structured change metadata.
 // The unified diff text is written to w.
 func DiffWithResult(a, b *render.Render, w io.Writer) (*DiffResult, error) {
+	result, err := ChangeSet(a, b)
+	if err != nil {
+		return nil, err
+	}
+	result.WriteUnified(w)
+	return result, nil
+}
+
+// ChangeSet computes structured resource changes between two renders.
+func ChangeSet(a, b *render.Render) (*DiffResult, error) {
 	result, err := k8qdiff.DiffNodes(renderToRNodes(a), renderToRNodes(b))
 	if err != nil {
 		return nil, err
@@ -159,77 +217,118 @@ func DiffWithResult(a, b *render.Render, w io.Writer) (*DiffResult, error) {
 	fmpResult := &DiffResult{}
 
 	for _, key := range result.Added {
-		id := objectRefToResId(key)
-		r, _ := b.GetByCurrentId(id)
-		if r == nil {
+		id := objectRefToResID(key)
+		view, ok := b.ResourceViewForID(id)
+		if !ok {
 			continue
 		}
-		yaml := r.MustYaml()
-		obj, _ := r.Map()
 		fmpResult.Added = append(fmpResult.Added, ResourceChange{
 			ID:        id,
-			Kind:      r.GetKind(),
-			Name:      r.GetName(),
-			Namespace: r.GetNamespace(),
-			Producer:  b.ProducerForID(id),
+			Kind:      view.Kind,
+			Name:      view.Name,
+			Namespace: view.Namespace,
+			Producer:  view.Producer,
 			Action:    "added",
-			New:       obj,
+			New:       view.Object,
+			newYAML:   view.YAML,
 		})
-		u := computeDiff(id.String(), "", yaml)
-		formatUnified(w, u)
 	}
 
 	for _, key := range result.Removed {
-		id := objectRefToResId(key)
-		r, _ := a.GetByCurrentId(id)
-		if r == nil {
+		id := objectRefToResID(key)
+		view, ok := a.ResourceViewForID(id)
+		if !ok {
 			continue
 		}
-		yaml := r.MustYaml()
-		obj, _ := r.Map()
 		fmpResult.Deleted = append(fmpResult.Deleted, ResourceChange{
 			ID:        id,
-			Kind:      r.GetKind(),
-			Name:      r.GetName(),
-			Namespace: r.GetNamespace(),
-			Producer:  a.ProducerForID(id),
+			Kind:      view.Kind,
+			Name:      view.Name,
+			Namespace: view.Namespace,
+			Producer:  view.Producer,
 			Action:    "deleted",
-			Old:       obj,
+			Old:       view.Object,
+			oldYAML:   view.YAML,
 		})
-		u := computeDiff(id.String(), yaml, "")
-		formatUnified(w, u)
 	}
 
 	for _, change := range result.Modified {
-		id := objectRefToResId(change.Key)
-		ar, _ := a.GetByCurrentId(id)
-		br, _ := b.GetByCurrentId(id)
-
-		if ar == nil || br == nil {
+		id := objectRefToResID(change.Key)
+		before, ok := a.ResourceViewForID(id)
+		if !ok {
+			continue
+		}
+		after, ok := b.ResourceViewForID(id)
+		if !ok {
 			continue
 		}
 
-		aYaml := ar.MustYaml()
-		bYaml := br.MustYaml()
-		if aYaml == bYaml {
+		aYAML := before.YAML
+		bYAML := after.YAML
+		if aYAML == bYAML {
 			continue
 		}
 
 		fmpResult.Modified = append(fmpResult.Modified, ResourceChange{
 			ID:        id,
-			Kind:      br.GetKind(),
-			Name:      br.GetName(),
-			Namespace: br.GetNamespace(),
-			Producer:  b.ProducerForID(id),
+			Kind:      after.Kind,
+			Name:      after.Name,
+			Namespace: after.Namespace,
+			Producer:  after.Producer,
 			Action:    "modified",
-			Old:       mapOrNil(ar),
-			New:       mapOrNil(br),
+			Old:       before.Object,
+			New:       after.Object,
+			oldYAML:   aYAML,
+			newYAML:   bYAML,
 		})
-		u := computeDiff(id.String(), aYaml, bYaml)
-		formatUnified(w, u)
 	}
 
+	fmpResult.Sort()
 	return fmpResult, nil
+}
+
+// WriteUnified writes the unified text representation of a change set.
+func (r *DiffResult) WriteUnified(w io.Writer) {
+	for _, change := range r.Deleted {
+		formatUnified(w, computeDiff(change.ID.String(), change.oldText(), ""))
+	}
+	for _, change := range r.Added {
+		formatUnified(w, computeDiff(change.ID.String(), "", change.newText()))
+	}
+	for _, change := range r.Modified {
+		formatUnified(w, computeDiff(change.ID.String(), change.oldText(), change.newText()))
+	}
+}
+
+func (c ResourceChange) oldText() string {
+	if c.oldYAML != "" {
+		return c.oldYAML
+	}
+	return mustYAMLMap(c.Old)
+}
+
+func (c ResourceChange) newText() string {
+	if c.newYAML != "" {
+		return c.newYAML
+	}
+	return mustYAMLMap(c.New)
+}
+
+// Sort applies deterministic ordering to all change groups.
+func (r *DiffResult) Sort() {
+	sortChanges(r.Added)
+	sortChanges(r.Deleted)
+	sortChanges(r.Modified)
+}
+
+func sortChanges(changes []ResourceChange) {
+	sort.Slice(changes, func(i, j int) bool {
+		return changeSortKey(changes[i]) < changeSortKey(changes[j])
+	})
+}
+
+func changeSortKey(change ResourceChange) string {
+	return change.Cluster + "\x00" + change.Kind + "\x00" + change.Namespace + "\x00" + change.Name + "\x00" + change.Action
 }
 
 // DiffWithResultClustered diffs two sets of renders keyed by cluster name.
@@ -239,15 +338,21 @@ func DiffWithResult(a, b *render.Render, w io.Writer) (*DiffResult, error) {
 func DiffWithResultClustered(left, right map[string]*render.Render, w io.Writer) (*DiffResult, error) {
 	fmpResult := &DiffResult{}
 
-	allClusters := make(map[string]bool)
+	allClusters := make(map[string]struct{})
 	for c := range left {
-		allClusters[c] = true
+		allClusters[c] = struct{}{}
 	}
 	for c := range right {
-		allClusters[c] = true
+		allClusters[c] = struct{}{}
 	}
 
+	clusters := make([]string, 0, len(allClusters))
 	for cluster := range allClusters {
+		clusters = append(clusters, cluster)
+	}
+	sort.Strings(clusters)
+
+	for _, cluster := range clusters {
 		lr, lok := left[cluster]
 		rr, rok := right[cluster]
 
@@ -296,18 +401,6 @@ func DiffWithResultClustered(left, right map[string]*render.Render, w io.Writer)
 		fmpResult.Modified = append(fmpResult.Modified, result.Modified...)
 	}
 
+	fmpResult.Sort()
 	return fmpResult, nil
-}
-
-func mapOrNil(res interface {
-	Map() (map[string]any, error)
-}) map[string]any {
-	if res == nil {
-		return nil
-	}
-	obj, err := res.Map()
-	if err != nil {
-		return nil
-	}
-	return obj
 }

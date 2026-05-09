@@ -7,7 +7,6 @@ import (
 	"text/tabwriter"
 
 	"github.com/tobiash/flux-manifest-preview/pkg/diff"
-	"github.com/tobiash/flux-manifest-preview/pkg/githubaction"
 	"github.com/tobiash/flux-manifest-preview/pkg/policy"
 )
 
@@ -35,7 +34,7 @@ func writeDiffSummary(out io.Writer, result *diff.DiffResult, policyResult *poli
 		return err
 	}
 
-	rows := sortedKindBreakdownRows(buildKindBreakdown(result))
+	rows := sortedKindBreakdownRows(diff.KindBreakdown(result))
 	if len(rows) == 0 {
 		return nil
 	}
@@ -115,61 +114,7 @@ type kindBreakdownRow struct {
 	Total    int
 }
 
-func buildKindBreakdown(result *diff.DiffResult) map[string]githubaction.ChangeBreakdown {
-	breakdown := make(map[string]githubaction.ChangeBreakdown)
-
-	for _, change := range result.Added {
-		entry := breakdown[change.Kind]
-		entry.Added++
-		entry.Total++
-		breakdown[change.Kind] = entry
-	}
-
-	for _, change := range result.Modified {
-		entry := breakdown[change.Kind]
-		entry.Modified++
-		entry.Total++
-		breakdown[change.Kind] = entry
-	}
-
-	for _, change := range result.Deleted {
-		entry := breakdown[change.Kind]
-		entry.Deleted++
-		entry.Total++
-		breakdown[change.Kind] = entry
-	}
-
-	return breakdown
-}
-
-func buildClusterBreakdown(result *diff.DiffResult) map[string]githubaction.ChangeBreakdown {
-	breakdown := make(map[string]githubaction.ChangeBreakdown)
-
-	for _, change := range result.Added {
-		entry := breakdown[change.Cluster]
-		entry.Added++
-		entry.Total++
-		breakdown[change.Cluster] = entry
-	}
-
-	for _, change := range result.Modified {
-		entry := breakdown[change.Cluster]
-		entry.Modified++
-		entry.Total++
-		breakdown[change.Cluster] = entry
-	}
-
-	for _, change := range result.Deleted {
-		entry := breakdown[change.Cluster]
-		entry.Deleted++
-		entry.Total++
-		breakdown[change.Cluster] = entry
-	}
-
-	return breakdown
-}
-
-func sortedKindBreakdownRows(m map[string]githubaction.ChangeBreakdown) []kindBreakdownRow {
+func sortedKindBreakdownRows(m map[string]diff.ChangeBreakdown) []kindBreakdownRow {
 	if len(m) == 0 {
 		return nil
 	}

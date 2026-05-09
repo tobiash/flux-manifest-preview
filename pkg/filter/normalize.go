@@ -127,17 +127,17 @@ func (fn *FieldNormalizer) applyFieldPath(node *yaml.RNode, fp FieldPath) error 
 		action = DefaultAction
 	}
 
-	starIdx := -1
+	starIndex := -1
 	for i, p := range fp.Path {
 		if p == "[*]" {
-			starIdx = i
+			starIndex = i
 			break
 		}
 	}
 
-	if starIdx >= 0 {
-		prefix := fp.Path[:starIdx]
-		suffix := fp.Path[starIdx+1:]
+	if starIndex >= 0 {
+		prefix := fp.Path[:starIndex]
+		suffix := fp.Path[starIndex+1:]
 
 		var arrNode *yaml.RNode
 		var err error

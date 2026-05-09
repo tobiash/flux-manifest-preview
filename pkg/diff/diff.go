@@ -25,8 +25,8 @@ func renderToRNodes(r *render.Render) []*yaml.RNode {
 	return nodes
 }
 
-// objectRefToResId converts a k8q ObjectRef to a kustomize resid.ResId.
-func objectRefToResId(ref k8qdiff.ObjectRef) resid.ResId {
+// objectRefToResID converts a k8q ObjectRef to a kustomize resid.ResId.
+func objectRefToResID(ref k8qdiff.ObjectRef) resid.ResId {
 	return resid.NewResIdWithNamespace(
 		resid.Gvk{
 			Group:   gvkGroup(ref.APIVersion),
@@ -74,34 +74,6 @@ func formatUnified(w io.Writer, u gotextdiff.Unified) {
 
 // Diff computes a unified diff between two Renders and writes the result to w.
 func Diff(a, b *render.Render, w io.Writer) error {
-	result, err := k8qdiff.DiffNodes(renderToRNodes(a), renderToRNodes(b))
-	if err != nil {
-		return err
-	}
-
-	for _, key := range result.Removed {
-		id := objectRefToResId(key)
-		r, _ := a.GetByCurrentId(id)
-		if r == nil {
-			continue
-		}
-		yaml := r.MustYaml()
-		formatUnified(w, computeDiff(id.String(), yaml, ""))
-	}
-
-	for _, key := range result.Added {
-		id := objectRefToResId(key)
-		r, _ := b.GetByCurrentId(id)
-		if r == nil {
-			continue
-		}
-		yaml := r.MustYaml()
-		formatUnified(w, computeDiff(id.String(), "", yaml))
-	}
-
-	for _, change := range result.Modified {
-		formatUnified(w, computeDiff(change.Key.String(), change.Before, change.After))
-	}
-
-	return nil
+	_, err := DiffWithResult(a, b, w)
+	return err
 }

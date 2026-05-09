@@ -79,7 +79,7 @@ func main() {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			log := cliLogger()
-			opts, err := buildOpts(log, args[0])
+			opts, err := buildOpts(cmd, log, args[0])
 			if err != nil {
 				return err
 			}
@@ -114,13 +114,13 @@ inputs, use explicit git: or path: prefixes.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			log := cliLogger()
 			if diffHTML {
-				return runDiffHTML(log, args)
+				return runDiffHTML(cmd, log, args)
 			}
 			if outputFormat == "json" {
-				return runDiffJSON(log, args, os.Stdout)
+				return runDiffJSON(cmd, log, args, os.Stdout)
 			}
 			summaryOut, diffOut := diffOutputs(os.Stdout, os.Stderr)
-			return runDiff(log, args, summaryOut, diffOut)
+			return runDiff(cmd, log, args, summaryOut, diffOut)
 		},
 	}
 	diffCmd.Flags().StringVarP(&outputFormat, "output", "o", "yaml", "Output format (yaml or json)")
@@ -135,7 +135,7 @@ inputs, use explicit git: or path: prefixes.`,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			log := cliLogger()
-			opts, err := buildOpts(log, args[0])
+			opts, err := buildOpts(cmd, log, args[0])
 			if err != nil {
 				return err
 			}
@@ -167,7 +167,7 @@ inputs, use explicit git: or path: prefixes.`,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			log := cliLogger()
-			opts, err := buildOpts(log, args[0])
+			opts, err := buildOpts(cmd, log, args[0])
 			if err != nil {
 				return err
 			}
@@ -194,7 +194,7 @@ inputs, use explicit git: or path: prefixes.`,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			log := cliLogger()
-			opts, err := buildOpts(log, args[0])
+			opts, err := buildOpts(cmd, log, args[0])
 			if err != nil {
 				return err
 			}
@@ -246,7 +246,7 @@ CLI flags and FMP_* env vars override the config file.`,
 				configRepo = ""
 			}
 
-			opts, err := buildOpts(log, configRepo)
+			opts, err := buildOpts(cmd, log, configRepo)
 			if err != nil {
 				return err
 			}
@@ -285,7 +285,7 @@ Use --init to generate a complete .fmp.yaml config file in the repo.`,
 			if initConfig {
 				return generateInitConfig(args[0])
 			}
-			opts, err := buildOptsNoFilters(log, args[0])
+			opts, err := buildOptsNoFilters(cmd, log, args[0])
 			if err != nil {
 				return err
 			}
@@ -441,15 +441,56 @@ func cliLogger() logr.Logger {
 	return zerologr.New(&zl)
 }
 
-func buildOpts(log logr.Logger, configRepoPath string) ([]preview.Opt, error) {
-	return buildOptsWithFilters(log, configRepoPath, true)
+type resolvedSettings struct {
+	paths        []string
+	clusterPaths map[string][]string
+	recursive    bool
+	resolveGit   bool
+	renderHelm   bool
+	sort         bool
+	excludeCRDs  bool
+	sopsDecrypt  bool
+	helmRelease  string
 }
 
-func buildOptsNoFilters(log logr.Logger, configRepoPath string) ([]preview.Opt, error) {
-	return buildOptsWithFilters(log, configRepoPath, false)
+func optsFromSettings(log logr.Logger, s resolvedSettings) []preview.Opt {
+	opts := []preview.Opt{preview.WithLogger(log)}
+	if len(s.clusterPaths) > 0 {
+		opts = append(opts, preview.WithClusterPaths(s.clusterPaths))
+	} else {
+		opts = append(opts, preview.WithPaths(s.paths, s.recursive))
+	}
+	if s.resolveGit {
+		opts = append(opts, preview.WithGitRepo())
+	}
+	opts = append(opts, preview.WithFluxKS())
+	if s.renderHelm {
+		opts = append(opts, preview.WithHelm(helmSettings()))
+	}
+	if s.sort {
+		opts = append(opts, preview.WithSort())
+	}
+	if s.excludeCRDs {
+		opts = append(opts, preview.WithExcludeCRDs())
+	}
+	if s.sopsDecrypt {
+		opts = append(opts, preview.WithSOPSDecrypt())
+	}
+	if s.helmRelease != "" {
+		opts = append(opts, preview.WithHelmReleaseFilter(s.helmRelease))
+	}
+	return opts
 }
 
-func buildOptsWithFilters(log logr.Logger, configRepoPath string, applyFilters bool) ([]preview.Opt, error) {
+func buildOpts(cmd *cobra.Command, log logr.Logger, configRepoPath string) ([]preview.Opt, error) {
+	return buildOptsWithFilters(cmd, log, configRepoPath, true)
+}
+
+func buildOptsNoFilters(cmd *cobra.Command, log logr.Logger, configRepoPath string) ([]preview.Opt, error) {
+	return buildOptsWithFilters(cmd, log, configRepoPath, false)
+}
+
+func buildOptsWithFilters(cmd *cobra.Command, log logr.Logger, configRepoPath string, applyFilters bool) ([]preview.Opt, error) {
 	cfg, err := loadConfigForRepo(configRepoPath, configFile)
 	if err != nil {
 		if configFile != "" {
@@ -458,39 +499,42 @@ func buildOptsWithFilters(log logr.Logger, configRepoPath string, applyFilters b
 		return nil, fmt.Errorf("loading config: %w", err)
 	}
 
-	paths := kustomizations
-	doRecursive := recursive
-	doHelm := renderHelm
-	doResolveGit := resolveGit
-	doSort := sortOutput
-	doExcludeCRDs := excludeCRDs
-	doSOPSDecrypt := sopsDecrypt
+	s := resolvedSettings{
+		paths:        kustomizations,
+		recursive:    recursive,
+		renderHelm:   renderHelm,
+		resolveGit:   resolveGit,
+		sort:         sortOutput,
+		excludeCRDs:  excludeCRDs,
+		sopsDecrypt:  sopsDecrypt,
+		helmRelease:  helmRelease,
+		clusterPaths: make(map[string][]string),
+	}
 
-	clusterPaths := make(map[string][]string)
 	if cfg != nil {
-		if len(paths) == 0 && len(cfg.Paths) > 0 {
-			paths = cfg.Paths
+		if len(s.paths) == 0 && len(cfg.Paths) > 0 {
+			s.paths = cfg.Paths
 		}
 		if cfg.ClusterPaths() != nil {
-			clusterPaths = cfg.ClusterPaths()
+			s.clusterPaths = cfg.ClusterPaths()
 		}
-		if !cmdChanged("recursive") {
-			doRecursive = config.BoolOr(cfg.Recursive, doRecursive)
+		if !flagChanged(cmd, "recursive") {
+			s.recursive = config.BoolOr(cfg.Recursive, s.recursive)
 		}
-		if !cmdChanged("render-helm") {
-			doHelm = config.BoolOr(cfg.Helm, doHelm)
+		if !flagChanged(cmd, "render-helm") {
+			s.renderHelm = config.BoolOr(cfg.Helm, s.renderHelm)
 		}
-		if !cmdChanged("resolve-git") {
-			doResolveGit = config.BoolOr(cfg.ResolveGit, doResolveGit)
+		if !flagChanged(cmd, "resolve-git") {
+			s.resolveGit = config.BoolOr(cfg.ResolveGit, s.resolveGit)
 		}
-		if !cmdChanged("sort") {
-			doSort = config.BoolOr(cfg.Sort, doSort)
+		if !flagChanged(cmd, "sort") {
+			s.sort = config.BoolOr(cfg.Sort, s.sort)
 		}
-		if !cmdChanged("exclude-crds") {
-			doExcludeCRDs = config.BoolOr(cfg.ExcludeCRDs, doExcludeCRDs)
+		if !flagChanged(cmd, "exclude-crds") {
+			s.excludeCRDs = config.BoolOr(cfg.ExcludeCRDs, s.excludeCRDs)
 		}
-		if !cmdChanged("sops-decrypt") {
-			doSOPSDecrypt = config.BoolOr(cfg.SOPSDecrypt, doSOPSDecrypt)
+		if !flagChanged(cmd, "sops-decrypt") {
+			s.sopsDecrypt = config.BoolOr(cfg.SOPSDecrypt, s.sopsDecrypt)
 		}
 		if cfg.HelmSettings != nil {
 			if helmRegistryConfig == "" {
@@ -505,36 +549,7 @@ func buildOptsWithFilters(log logr.Logger, configRepoPath string, applyFilters b
 		}
 	}
 
-	opts := []preview.Opt{
-		preview.WithLogger(log),
-	}
-	if len(clusterPaths) > 0 {
-		opts = append(opts, preview.WithClusterPaths(clusterPaths))
-	} else {
-		opts = append(opts, preview.WithPaths(paths, doRecursive))
-	}
-
-	if doResolveGit {
-		opts = append(opts, preview.WithGitRepo())
-	}
-
-	opts = append(opts, preview.WithFluxKS())
-
-	if doHelm {
-		opts = append(opts, preview.WithHelm(helmSettings()))
-	}
-
-	if doSort {
-		opts = append(opts, preview.WithSort())
-	}
-
-	if doExcludeCRDs {
-		opts = append(opts, preview.WithExcludeCRDs())
-	}
-
-	if doSOPSDecrypt {
-		opts = append(opts, preview.WithSOPSDecrypt())
-	}
+	opts := optsFromSettings(log, s)
 
 	if applyFilters {
 		if filtersFile != "" {
@@ -554,30 +569,15 @@ func buildOptsWithFilters(log logr.Logger, configRepoPath string, applyFilters b
 	return opts, nil
 }
 
-func cmdChanged(flagName string) bool {
-	for _, cmd := range os.Args[1:] {
-		for _, name := range []string{"--" + flagName, "-" + shortFlag(flagName)} {
-			if cmd == name || strings.HasPrefix(cmd, name+"=") {
-				return true
-			}
-		}
+func flagChanged(cmd *cobra.Command, name string) bool {
+	if cmd == nil {
+		return false
 	}
-	return false
-}
-
-func shortFlag(name string) string {
-	switch name {
-	case "recursive":
-		return "r"
-	case "render-helm":
-		return "H"
-	case "sort":
-		return "s"
-	case "quiet":
-		return "q"
-	default:
-		return ""
+	f := cmd.Flags().Lookup(name)
+	if f == nil {
+		return false
 	}
+	return f.Changed
 }
 
 func generateInitConfig(repoPath string) error {
@@ -588,7 +588,7 @@ func generateInitConfig(repoPath string) error {
 
 	dest = repoPath + "/.fmp.yaml"
 
-	opts, err := buildOpts(logr.Discard(), repoPath)
+	opts, err := buildOpts(nil, logr.Discard(), repoPath)
 	if err != nil {
 		return err
 	}

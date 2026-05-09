@@ -33,7 +33,7 @@ exclude-crds: true
 
 	configFile = explicitConfigPath
 
-	opts, err := buildOpts(logr.Discard(), repoDir)
+	opts, err := buildOpts(nil, logr.Discard(), repoDir)
 	if err != nil {
 		t.Fatalf("buildOpts() error = %v", err)
 	}

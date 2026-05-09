@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -19,11 +18,9 @@ import (
 	helmexpander "github.com/tobiash/flux-manifest-preview/pkg/expander/helm"
 	"github.com/tobiash/flux-manifest-preview/pkg/filter"
 	"github.com/tobiash/flux-manifest-preview/pkg/render"
-	"github.com/tobiash/flux-manifest-preview/pkg/sops"
 	"golang.org/x/sync/errgroup"
 	"gopkg.in/yaml.v3"
 	helmcli "helm.sh/helm/v4/pkg/cli"
-	"sigs.k8s.io/kustomize/kyaml/filesys"
 )
 
 // Preview renders and diffs Flux GitOps resources.
@@ -61,250 +58,6 @@ func (e *ExpansionError) Error() string {
 		msgs = append(msgs, err.Error())
 	}
 	return fmt.Sprintf("expansion errors: %s", strings.Join(msgs, "; "))
-}
-
-// loadRepoResult holds the result of loading and expanding a repo.
-type loadRepoResult struct {
-	render   *render.Render
-	errors   []error
-	warnings []error
-}
-
-func (p *Preview) loadRepo(ctx context.Context, path string) (map[string]*loadRepoResult, error) {
-	if p.isClustered() {
-		return p.loadRepoClustered(ctx, path)
-	}
-	result, err := p.loadRepoFlat(ctx, path)
-	if err != nil {
-		return nil, err
-	}
-	return map[string]*loadRepoResult{"": result}, nil
-}
-
-func (p *Preview) loadRepoFlat(ctx context.Context, path string) (*loadRepoResult, error) {
-	log := p.log.WithValues("renderPath", path)
-	r := render.NewDefaultRender(log)
-	fSys := filesys.MakeFsOnDisk()
-	var collectedErrors []error
-	activeExpanders := p.expandersForSource(path)
-
-	// Seed the queue with user-specified paths.
-	queue := make([]expander.DiscoveredPath, len(p.paths))
-	for i, p := range p.paths {
-		queue[i] = expander.DiscoveredPath{Path: p, Producer: fmt.Sprintf("path %s", p)}
-	}
-
-	// userPaths tracks which paths were explicitly requested by the user.
-	// Missing user paths are errors; missing discovered paths are skipped.
-	userPaths := make(map[string]bool, len(p.paths))
-	for _, p := range p.paths {
-		userPaths[p] = true
-	}
-
-	// visited tracks paths already rendered to prevent cycles.
-	visited := make(map[string]bool)
-
-	const maxIterations = 100
-	for iteration := 0; len(queue) > 0; iteration++ {
-		if iteration > maxIterations {
-			return nil, fmt.Errorf("expansion loop exceeded %d iterations, possible cycle", maxIterations)
-		}
-
-		// Render all newly discovered paths.
-		for _, dp := range queue {
-			baseDir := dp.BaseDir
-			if baseDir == "" {
-				baseDir = path
-			}
-			full := filepath.Join(baseDir, dp.Path)
-			if visited[full] {
-				continue
-			}
-			visited[full] = true
-
-			if !fSys.Exists(full) {
-				if userPaths[dp.Path] {
-					return nil, fmt.Errorf("path %q does not exist", dp.Path)
-				}
-				log.V(1).Info("skipping non-existent path", "path", dp.Path)
-				continue
-			}
-
-			log.V(1).Info("rendering path", "path", dp.Path, "baseDir", dp.BaseDir)
-			count := r.Size()
-			producer := dp.Producer
-			if producer == "" {
-				producer = fmt.Sprintf("path %s", dp.Path)
-			}
-			if p.recursive {
-				if err := r.AddPathsWithProducer(fSys, full, producer); err != nil {
-					return nil, fmt.Errorf("failed to add path %s: %w", full, err)
-				}
-			} else {
-				if err := r.AddPathWithProducer(fSys, full, producer); err != nil {
-					return nil, fmt.Errorf("failed to add path %s: %w", full, err)
-				}
-			}
-			if dp.Namespace != "" {
-				r.ApplyNamespaceToNew(count, dp.Namespace)
-			}
-			r.MarkProvenanceToNew(count, producer)
-		}
-
-		// Run expanders to discover new paths and expand resources.
-		queue = nil
-		if activeExpanders != nil {
-			result, err := activeExpanders.Expand(ctx, r)
-			if err != nil {
-				return nil, fmt.Errorf("failed to expand: %w", err)
-			}
-			collectedErrors = append(collectedErrors, result.Errors...)
-			if result.Resources != nil {
-				if err := r.AbsorbAll(result.Resources); err != nil {
-					return nil, fmt.Errorf("failed to absorb expanded resources: %w", err)
-				}
-			}
-			// Only queue paths we haven't rendered yet.
-			for _, dp := range result.DiscoveredPaths {
-				baseDir := dp.BaseDir
-				if baseDir == "" {
-					baseDir = path
-				}
-				full := filepath.Join(baseDir, dp.Path)
-				if !visited[full] {
-					queue = append(queue, dp)
-				}
-			}
-		}
-	}
-
-	if p.filters != nil {
-		for _, f := range p.filters.Filters {
-			if err := r.ApplyFilter(f.Filter); err != nil {
-				return nil, err
-			}
-		}
-	}
-
-	if p.sopsDecrypt {
-		if err := sops.DecryptResources(r); err != nil {
-			return nil, fmt.Errorf("sops decryption failed: %w", err)
-		}
-	}
-	warnings := r.Warnings()
-
-	return &loadRepoResult{render: r, errors: collectedErrors, warnings: warnings}, nil
-}
-
-func (p *Preview) loadRepoClustered(ctx context.Context, path string) (map[string]*loadRepoResult, error) {
-	results := make(map[string]*loadRepoResult, len(p.clusterPaths))
-	for cluster, paths := range p.clusterPaths {
-		log := p.log.WithValues("cluster", cluster, "renderPath", path)
-		r := render.NewDefaultRender(log)
-		fSys := filesys.MakeFsOnDisk()
-		var collectedErrors []error
-		activeExpanders := p.expandersForSource(path)
-
-		queue := make([]expander.DiscoveredPath, len(paths))
-		for i, p := range paths {
-			queue[i] = expander.DiscoveredPath{Path: p, Producer: fmt.Sprintf("path %s", p)}
-		}
-
-		userPaths := make(map[string]bool, len(paths))
-		for _, p := range paths {
-			userPaths[p] = true
-		}
-
-		visited := make(map[string]bool)
-
-		const maxIterations = 100
-		for iteration := 0; len(queue) > 0; iteration++ {
-			if iteration > maxIterations {
-				return nil, fmt.Errorf("cluster %q: expansion loop exceeded %d iterations, possible cycle", cluster, maxIterations)
-			}
-
-			for _, dp := range queue {
-				baseDir := dp.BaseDir
-				if baseDir == "" {
-					baseDir = path
-				}
-				full := filepath.Join(baseDir, dp.Path)
-				if visited[full] {
-					continue
-				}
-				visited[full] = true
-
-				if !fSys.Exists(full) {
-					if userPaths[dp.Path] {
-						return nil, fmt.Errorf("cluster %q: path %q does not exist", cluster, dp.Path)
-					}
-					log.V(1).Info("skipping non-existent path", "path", dp.Path)
-					continue
-				}
-
-				log.V(1).Info("rendering path", "path", dp.Path, "baseDir", dp.BaseDir)
-				count := r.Size()
-				producer := dp.Producer
-				if producer == "" {
-					producer = fmt.Sprintf("path %s", dp.Path)
-				}
-				if p.recursive {
-					if err := r.AddPathsWithProducer(fSys, full, producer); err != nil {
-						return nil, fmt.Errorf("cluster %q: failed to add path %s: %w", cluster, full, err)
-					}
-				} else {
-					if err := r.AddPathWithProducer(fSys, full, producer); err != nil {
-						return nil, fmt.Errorf("cluster %q: failed to add path %s: %w", cluster, full, err)
-					}
-				}
-				if dp.Namespace != "" {
-					r.ApplyNamespaceToNew(count, dp.Namespace)
-				}
-				r.MarkProvenanceToNew(count, producer)
-			}
-
-			queue = nil
-			if activeExpanders != nil {
-				result, err := activeExpanders.Expand(ctx, r)
-				if err != nil {
-					return nil, fmt.Errorf("cluster %q: failed to expand: %w", cluster, err)
-				}
-				collectedErrors = append(collectedErrors, result.Errors...)
-				if result.Resources != nil {
-					if err := r.AbsorbAll(result.Resources); err != nil {
-						return nil, fmt.Errorf("cluster %q: failed to absorb expanded resources: %w", cluster, err)
-					}
-				}
-				for _, dp := range result.DiscoveredPaths {
-					baseDir := dp.BaseDir
-					if baseDir == "" {
-						baseDir = path
-					}
-					full := filepath.Join(baseDir, dp.Path)
-					if !visited[full] {
-						queue = append(queue, dp)
-					}
-				}
-			}
-		}
-
-		if p.filters != nil {
-			for _, f := range p.filters.Filters {
-				if err := r.ApplyFilter(f.Filter); err != nil {
-					return nil, err
-				}
-			}
-		}
-
-		if p.sopsDecrypt {
-			if err := sops.DecryptResources(r); err != nil {
-				return nil, fmt.Errorf("cluster %q: sops decryption failed: %w", cluster, err)
-			}
-		}
-		warnings := r.Warnings()
-		results[cluster] = &loadRepoResult{render: r, errors: collectedErrors, warnings: warnings}
-	}
-	return results, nil
 }
 
 func sortedClusterNames(results map[string]*loadRepoResult) []string {
@@ -926,26 +679,11 @@ func (p *Preview) GenerateInitConfig(ctx context.Context, path, destPath string)
 	return nil
 }
 
-// freshLoadRepo creates a fresh Preview instance with the same configuration
-// but new expanders, then loads the repo. This is needed for permadiff
-// detection where we need independent render passes that don't share
-// cached expander state (e.g. the Helm expander's expanded-release map).
+// freshLoadRepo creates a new set of expanders for an independent render pass.
+// This is needed for permadiff detection where two separate render passes
+// must not share expander state (e.g. the Helm expander's dedup map).
 func (p *Preview) freshLoadRepo(ctx context.Context, path string) (map[string]*loadRepoResult, error) {
-	fresh := &Preview{
-		paths:           p.paths,
-		clusterPaths:    p.clusterPaths,
-		recursive:       p.recursive,
-		sortOutput:      p.sortOutput,
-		excludeCRDs:     p.excludeCRDs,
-		sopsDecrypt:     p.sopsDecrypt,
-		filters:         p.filters,
-		fluxKSEnabled:   p.fluxKSEnabled,
-		log:             p.log,
-		gitRepoExpander: p.gitRepoExpander,
-		helmSettings:    p.helmSettings,
-	}
-
-	return fresh.loadRepo(ctx, path)
+	return p.loadRepo(ctx, path)
 }
 
 func boolPtr(b bool) *bool {

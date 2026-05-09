@@ -3,6 +3,7 @@ package githubaction
 import (
 	"strings"
 
+	"github.com/tobiash/flux-manifest-preview/pkg/diff"
 	"github.com/tobiash/flux-manifest-preview/pkg/policy"
 )
 
@@ -37,10 +38,10 @@ type ActionReport struct {
 	ResourcesDeleted  int `json:"resources_deleted"`
 	ResourcesTotal    int `json:"resources_total"`
 
-	ByKind        map[string]int             `json:"by_kind,omitempty"`
-	KindBreakdown map[string]ChangeBreakdown `json:"kind_breakdown,omitempty"`
-	ByProducer    map[string]int             `json:"by_producer,omitempty"`
-	ByCluster     map[string]ChangeBreakdown `json:"by_cluster,omitempty"`
+	ByKind        map[string]int                  `json:"by_kind,omitempty"`
+	KindBreakdown map[string]diff.ChangeBreakdown `json:"kind_breakdown,omitempty"`
+	ByProducer    map[string]int                  `json:"by_producer,omitempty"`
+	ByCluster     map[string]diff.ChangeBreakdown `json:"by_cluster,omitempty"`
 
 	Classifications []policy.Classification `json:"classifications,omitempty"`
 	Violations      []policy.Violation      `json:"violations,omitempty"`
@@ -49,13 +50,8 @@ type ActionReport struct {
 	PolicyFailed    bool                    `json:"policy_failed"`
 }
 
-// ChangeBreakdown holds added/modified/deleted counts for a category like kind.
-type ChangeBreakdown struct {
-	Added    int `json:"added"`
-	Modified int `json:"modified"`
-	Deleted  int `json:"deleted"`
-	Total    int `json:"total"`
-}
+// ChangeBreakdown is an alias for diff.ChangeBreakdown for backward compatibility.
+type ChangeBreakdown = diff.ChangeBreakdown
 
 // StatusFromCounts derives the overall status from changes, warnings, and errors.
 func StatusFromCounts(changed bool, warnings int, errors int) string {

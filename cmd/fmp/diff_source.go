@@ -16,7 +16,6 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/spf13/cobra"
 
-	"github.com/tobiash/flux-manifest-preview/pkg/config"
 	"github.com/tobiash/flux-manifest-preview/pkg/diff"
 	gitrepoexpander "github.com/tobiash/flux-manifest-preview/pkg/expander/gitrepo"
 	"github.com/tobiash/flux-manifest-preview/pkg/githubaction"
@@ -52,36 +51,50 @@ func validateDiffArgs(_ *cobra.Command, args []string) error {
 	return nil
 }
 
-func runDiff(log logr.Logger, args []string, summaryOut io.Writer, diffOut io.Writer) error {
+type diffExecResult struct {
+	result       *diff.DiffResult
+	diffText     bytes.Buffer
+	policyResult *policy.Result
+	plan         *diffPlan
+}
+
+func executeDiff(cmd *cobra.Command, ctx context.Context, log logr.Logger, args []string) (*diffExecResult, func(), error) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("determining current directory: %w", err)
+		return nil, nil, fmt.Errorf("determining current directory: %w", err)
 	}
 
 	plan, err := resolveDiffPlan(args, cwd)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 
-	leftPath, leftCleanup, err := plan.left.materialize(context.Background())
+	leftPath, leftCleanup, err := plan.left.materialize(ctx)
 	if err != nil {
-		return err
-	}
-	if leftCleanup != nil {
-		defer leftCleanup()
+		return nil, nil, err
 	}
 
-	rightPath, rightCleanup, err := plan.right.materialize(context.Background())
+	rightPath, rightCleanup, err := plan.right.materialize(ctx)
 	if err != nil {
-		return err
-	}
-	if rightCleanup != nil {
-		defer rightCleanup()
+		if leftCleanup != nil {
+			leftCleanup()
+		}
+		return nil, nil, err
 	}
 
-	opts, err := buildOpts(log, plan.configRoot)
+	cleanup := func() {
+		if leftCleanup != nil {
+			leftCleanup()
+		}
+		if rightCleanup != nil {
+			rightCleanup()
+		}
+	}
+
+	opts, err := buildOpts(cmd, log, plan.configRoot)
 	if err != nil {
-		return err
+		cleanup()
+		return nil, nil, err
 	}
 	if helmRelease != "" {
 		opts = append(opts, preview.WithHelmReleaseFilter(helmRelease))
@@ -89,113 +102,75 @@ func runDiff(log logr.Logger, args []string, summaryOut io.Writer, diffOut io.Wr
 
 	p, err := preview.New(opts...)
 	if err != nil {
-		return fmt.Errorf("error creating preview: %w", err)
+		cleanup()
+		return nil, nil, fmt.Errorf("error creating preview: %w", err)
 	}
 
 	var diffText bytes.Buffer
-	result, err := p.DiffResult(context.Background(), leftPath, rightPath, &diffText)
+	result, err := p.DiffResult(ctx, leftPath, rightPath, &diffText)
 	if err != nil {
-		return err
+		cleanup()
+		return nil, nil, err
 	}
 
 	cfg, err := loadConfigForRepo(plan.configRoot, configFile)
 	if err != nil {
+		cleanup()
 		if configFile != "" {
-			return fmt.Errorf("loading config %s: %w", configFile, err)
+			return nil, nil, fmt.Errorf("loading config %s: %w", configFile, err)
 		}
-		return fmt.Errorf("loading config: %w", err)
+		return nil, nil, fmt.Errorf("loading config: %w", err)
 	}
 
-	var policyCfg *config.PolicyConfig
+	var policyResult *policy.Result
 	if cfg != nil {
-		policyCfg = cfg.Policies
-	}
-	policyResult, err := policy.Evaluate(context.Background(), result, policyCfg, policyBaseDir(plan.configRoot, cfg))
-	if err != nil {
-		return fmt.Errorf("evaluating policies: %w", err)
+		policyResult, err = policy.Evaluate(ctx, result, cfg.Policies, policyBaseDir(plan.configRoot, cfg))
+		if err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("evaluating policies: %w", err)
+		}
 	}
 
-	if err := writeDiffSummary(summaryOut, result, policyResult); err != nil {
-		return fmt.Errorf("writing diff summary: %w", err)
-	}
-	if _, err = io.Copy(diffOut, &diffText); err != nil {
+	return &diffExecResult{
+		result:       result,
+		diffText:     diffText,
+		policyResult: policyResult,
+		plan:         plan,
+	}, cleanup, nil
+}
+
+func runDiff(cmd *cobra.Command, log logr.Logger, args []string, summaryOut io.Writer, diffOut io.Writer) error {
+	dr, cleanup, err := executeDiff(cmd, context.Background(), log, args)
+	if err != nil {
 		return err
 	}
-	if policyResult.PolicyFailed {
-		return fmt.Errorf("%w: %s", ErrPolicyViolation, strings.Join(policyResult.PolicyFailures, ", "))
+	defer cleanup()
+
+	if err := writeDiffSummary(summaryOut, dr.result, dr.policyResult); err != nil {
+		return fmt.Errorf("writing diff summary: %w", err)
+	}
+	if _, err = io.Copy(diffOut, &dr.diffText); err != nil {
+		return err
+	}
+	if dr.policyResult != nil && dr.policyResult.PolicyFailed {
+		return fmt.Errorf("%w: %s", ErrPolicyViolation, strings.Join(dr.policyResult.PolicyFailures, ", "))
 	}
 	return nil
 }
 
-func runDiffJSON(log logr.Logger, args []string, out io.Writer) error {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("determining current directory: %w", err)
-	}
-
-	plan, err := resolveDiffPlan(args, cwd)
+func runDiffJSON(cmd *cobra.Command, log logr.Logger, args []string, out io.Writer) error {
+	dr, cleanup, err := executeDiff(cmd, context.Background(), log, args)
 	if err != nil {
 		return err
 	}
+	defer cleanup()
 
-	leftPath, leftCleanup, err := plan.left.materialize(context.Background())
-	if err != nil {
-		return err
-	}
-	if leftCleanup != nil {
-		defer leftCleanup()
-	}
-
-	rightPath, rightCleanup, err := plan.right.materialize(context.Background())
-	if err != nil {
-		return err
-	}
-	if rightCleanup != nil {
-		defer rightCleanup()
-	}
-
-	opts, err := buildOpts(log, plan.configRoot)
-	if err != nil {
-		return err
-	}
-	if helmRelease != "" {
-		opts = append(opts, preview.WithHelmReleaseFilter(helmRelease))
-	}
-
-	p, err := preview.New(opts...)
-	if err != nil {
-		return fmt.Errorf("error creating preview: %w", err)
-	}
-
-	var diffText bytes.Buffer
-	result, err := p.DiffResult(context.Background(), leftPath, rightPath, &diffText)
-	if err != nil {
-		return err
-	}
-
-	cfg, err := loadConfigForRepo(plan.configRoot, configFile)
-	if err != nil {
-		if configFile != "" {
-			return fmt.Errorf("loading config %s: %w", configFile, err)
-		}
-		return fmt.Errorf("loading config: %w", err)
-	}
-
-	var policyCfg *config.PolicyConfig
-	if cfg != nil {
-		policyCfg = cfg.Policies
-	}
-	policyResult, err := policy.Evaluate(context.Background(), result, policyCfg, policyBaseDir(plan.configRoot, cfg))
-	if err != nil {
-		return fmt.Errorf("evaluating policies: %w", err)
-	}
-
-	jsonResult := result.ToJSON()
+	jsonResult := dr.result.ToJSON()
 	output := map[string]any{
 		"added":    jsonResult.Added,
 		"deleted":  jsonResult.Deleted,
 		"modified": jsonResult.Modified,
-		"policy":   policyResult,
+		"policy":   dr.policyResult,
 	}
 
 	enc := json.NewEncoder(out)
@@ -204,81 +179,30 @@ func runDiffJSON(log logr.Logger, args []string, out io.Writer) error {
 		return fmt.Errorf("encoding JSON: %w", err)
 	}
 
-	if policyResult.PolicyFailed {
-		return fmt.Errorf("%w: %s", ErrPolicyViolation, strings.Join(policyResult.PolicyFailures, ", "))
+	if dr.policyResult != nil && dr.policyResult.PolicyFailed {
+		return fmt.Errorf("%w: %s", ErrPolicyViolation, strings.Join(dr.policyResult.PolicyFailures, ", "))
 	}
 	return nil
 }
 
-func runDiffHTML(log logr.Logger, args []string) error {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("determining current directory: %w", err)
-	}
-
-	plan, err := resolveDiffPlan(args, cwd)
+func runDiffHTML(cmd *cobra.Command, log logr.Logger, args []string) error {
+	dr, cleanup, err := executeDiff(cmd, context.Background(), log, args)
 	if err != nil {
 		return err
 	}
+	defer cleanup()
 
-	leftPath, leftCleanup, err := plan.left.materialize(context.Background())
-	if err != nil {
-		return err
-	}
-	if leftCleanup != nil {
-		defer leftCleanup()
-	}
-
-	rightPath, rightCleanup, err := plan.right.materialize(context.Background())
-	if err != nil {
-		return err
-	}
-	if rightCleanup != nil {
-		defer rightCleanup()
-	}
-
-	opts, err := buildOpts(log, plan.configRoot)
-	if err != nil {
-		return err
-	}
-	if helmRelease != "" {
-		opts = append(opts, preview.WithHelmReleaseFilter(helmRelease))
-	}
-
-	p, err := preview.New(opts...)
-	if err != nil {
-		return fmt.Errorf("error creating preview: %w", err)
-	}
-
-	var diffText bytes.Buffer
-	result, err := p.DiffResult(context.Background(), leftPath, rightPath, &diffText)
-	if err != nil {
-		return err
-	}
-
-	cfg, err := loadConfigForRepo(plan.configRoot, configFile)
-	if err != nil {
-		if configFile != "" {
-			return fmt.Errorf("loading config %s: %w", configFile, err)
-		}
-		return fmt.Errorf("loading config: %w", err)
-	}
-
-	var policyResult *policy.Result
-	if cfg != nil {
-		policyResult, err = policy.Evaluate(context.Background(), result, cfg.Policies, policyBaseDir(plan.configRoot, cfg))
-		if err != nil {
-			return fmt.Errorf("evaluating policies: %w", err)
-		}
-	}
-
-	report := buildActionReport(result, policyResult, diffText.String())
+	report := githubaction.BuildReport(githubaction.ReportInput{
+		Result:       dr.result,
+		PolicyResult: dr.policyResult,
+		FullDiff:     dr.diffText.String(),
+	})
 	req := &githubaction.Request{
-		BaseRef:                        plan.left.label(),
-		Repo:                           plan.right.label(),
+		BaseRef:                        dr.plan.left.label(),
+		Repo:                           dr.plan.right.label(),
 		HTMLReportMaxResourceDiffBytes: 2_000_000,
 	}
-	html, err := githubaction.RenderHTMLReport(githubaction.BuildHTMLReportData(req, report, result))
+	html, err := githubaction.RenderHTMLReport(githubaction.BuildHTMLReportData(req, report, dr.result))
 	if err != nil {
 		return fmt.Errorf("rendering html report: %w", err)
 	}
@@ -297,32 +221,6 @@ func runDiffHTML(log logr.Logger, args []string) error {
 		return openBrowser(htmlFile)
 	}
 	return nil
-}
-
-func buildActionReport(result *diff.DiffResult, policyResult *policy.Result, fullDiff string) *githubaction.ActionReport {
-	report := &githubaction.ActionReport{
-		Status:            githubaction.StatusFromCounts(result.TotalChanged() > 0, 0, 0),
-		Changed:           result.TotalChanged() > 0,
-		DiffBytes:         len(fullDiff),
-		ResourcesAdded:    len(result.Added),
-		ResourcesModified: len(result.Modified),
-		ResourcesDeleted:  len(result.Deleted),
-		ResourcesTotal:    result.TotalChanged(),
-		ByKind:            result.ByKind(),
-		KindBreakdown:     buildKindBreakdown(result),
-		ByCluster:         buildClusterBreakdown(result),
-	}
-	if policyResult != nil {
-		report.Classifications = policyResult.Classifications
-		report.Violations = policyResult.Violations
-		report.Labels = policyResult.Labels
-		report.PolicyFailures = policyResult.PolicyFailures
-		report.PolicyFailed = policyResult.PolicyFailed
-		if report.PolicyFailed {
-			report.Status = githubaction.StatusError
-		}
-	}
-	return report
 }
 
 func openBrowser(url string) error {

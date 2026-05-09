@@ -17,11 +17,6 @@ import (
 
 var fluxKSGVK = resid.NewGvk("kustomize.toolkit.fluxcd.io", "v1", "Kustomization")
 
-// matchGVK reports true if the resource's GVK matches the target by group and kind.
-func matchGVK(resGvk resid.Gvk, target resid.Gvk) bool {
-	return resGvk.Group == target.Group && resGvk.Kind == target.Kind
-}
-
 // SourceResolver resolves GitRepository source references to local paths.
 type SourceResolver interface {
 	ResolvePath(namespace, name string) (string, bool)
@@ -50,7 +45,7 @@ func (e *Expander) Expand(_ context.Context, r *render.Render) (*expander.Expand
 
 	for _, res := range r.Resources() {
 		gvk := res.GetGvk()
-		if !matchGVK(gvk, fluxKSGVK) {
+		if !render.MatchGVK(gvk, fluxKSGVK) {
 			continue
 		}
 

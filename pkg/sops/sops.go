@@ -11,14 +11,16 @@ import (
 )
 
 const (
-	SopsField = "sops"
+	SOPSField = "sops"
 	SecretGVK = "Secret"
 )
 
 func IsSOPSContainer(m map[string]any) bool {
-	_, ok := m[SopsField]
+	_, ok := m[SOPSField]
 	return ok
 }
+
+var decryptFunc = decryptYAML
 
 func DecryptResources(rm resmap.ResMap) error {
 	for _, res := range rm.Resources() {
@@ -38,7 +40,7 @@ func DecryptResources(rm resmap.ResMap) error {
 			return fmt.Errorf("marshaling SOPS secret %s: %w", res.CurId(), err)
 		}
 
-		decrypted, err := decryptYAML(yamlData)
+		decrypted, err := decryptFunc(yamlData)
 		if err != nil {
 			return fmt.Errorf("decrypting SOPS secret %s: %w", res.CurId(), err)
 		}
@@ -55,10 +57,10 @@ func DecryptResources(rm resmap.ResMap) error {
 		}
 
 		decryptedRes := decryptedResources[0]
-		origId := res.CurId()
-		_ = rm.Remove(origId)
+		origID := res.CurId()
+		_ = rm.Remove(origID)
 		if err := rm.Append(decryptedRes); err != nil {
-			return fmt.Errorf("replacing decrypted SOPS secret %s: %w", origId, err)
+			return fmt.Errorf("replacing decrypted SOPS secret %s: %w", origID, err)
 		}
 	}
 	return nil

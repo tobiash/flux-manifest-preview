@@ -99,3 +99,93 @@ func makeSOPSResMap(t *testing.T, y string) resmap.ResMap {
 	t.Helper()
 	return makeResMap(t, y)
 }
+
+func TestDecryptResources_ReplacesEncryptedSecret(t *testing.T) {
+	origDecrypt := decryptFunc
+	defer func() { decryptFunc = origDecrypt }()
+
+	decryptedYAML := []byte(`apiVersion: v1
+kind: Secret
+metadata:
+  name: sops-secret
+  namespace: default
+data:
+  key: REVMT0M=
+`)
+	decryptFunc = func(data []byte) ([]byte, error) {
+		return decryptedYAML, nil
+	}
+
+	rm := makeSOPSResMap(t, `apiVersion: v1
+kind: Secret
+metadata:
+  name: sops-secret
+  namespace: default
+data:
+  key: QUJD
+sops:
+  mac: "encrypted-mac"
+`)
+
+	if err := DecryptResources(rm); err != nil {
+		t.Fatalf("DecryptResources() error = %v", err)
+	}
+
+	res := rm.Resources()
+	if len(res) != 1 {
+		t.Fatalf("expected 1 resource, got %d", len(res))
+	}
+	m, err := res[0].Map()
+	if err != nil {
+		t.Fatalf("Map() error = %v", err)
+	}
+	if _, hasSOPS := m["sops"]; hasSOPS {
+		t.Error("expected sops key to be removed after decryption")
+	}
+}
+
+func TestDecryptResources_SkipsNonSOPSSecrets(t *testing.T) {
+	origDecrypt := decryptFunc
+	defer func() { decryptFunc = origDecrypt }()
+
+	decryptFunc = func(data []byte) ([]byte, error) {
+		t.Fatal("decryptFunc should not be called for non-SOPS secrets")
+		return nil, nil
+	}
+
+	rm := makeResMap(t, `apiVersion: v1
+kind: Secret
+metadata:
+  name: plain-secret
+  namespace: default
+data:
+  key: QUJD
+`)
+
+	if err := DecryptResources(rm); err != nil {
+		t.Fatalf("DecryptResources() error = %v", err)
+	}
+}
+
+func TestDecryptResources_SkipsNonSecrets(t *testing.T) {
+	origDecrypt := decryptFunc
+	defer func() { decryptFunc = origDecrypt }()
+
+	decryptFunc = func(data []byte) ([]byte, error) {
+		t.Fatal("decryptFunc should not be called for non-Secret resources")
+		return nil, nil
+	}
+
+	rm := makeResMap(t, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: test-cm
+  namespace: default
+data:
+  key: value
+`)
+
+	if err := DecryptResources(rm); err != nil {
+		t.Fatalf("DecryptResources() error = %v", err)
+	}
+}

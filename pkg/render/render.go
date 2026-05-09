@@ -14,6 +14,12 @@ import (
 	"sigs.k8s.io/kustomize/kyaml/resid"
 )
 
+// MatchGVK reports true if the resource's GVK matches the target by group and kind.
+// Version is ignored because Flux resources exist in multiple API versions.
+func MatchGVK(resGvk, target resid.Gvk) bool {
+	return resGvk.Group == target.Group && resGvk.Kind == target.Kind
+}
+
 // Render holds a set of rendered Kubernetes YAML resources.
 type Render struct {
 	resmap.ResMap
@@ -21,6 +27,17 @@ type Render struct {
 	log        logr.Logger
 	warnings   []error
 	provenance map[string]string
+}
+
+// ResourceView is the domain view of a rendered Kubernetes resource plus fmp metadata.
+type ResourceView struct {
+	ID        resid.ResId
+	Kind      string
+	Name      string
+	Namespace string
+	Producer  string
+	Object    map[string]any
+	YAML      string
 }
 
 // NewDefaultRender creates a Render with default kustomize options.
@@ -34,7 +51,6 @@ func NewDefaultRender(log logr.Logger) *Render {
 }
 
 // AddKustomization runs kustomize on the given path and appends the results.
-
 func (r *Render) AddKustomization(fSys filesys.FileSystem, path string) error {
 	return r.AddKustomizationWithProducer(fSys, path, fmt.Sprintf("path %s", path))
 }
@@ -184,6 +200,24 @@ func (r *Render) MarkProvenanceToNew(count int, producer string) {
 // ProducerForID returns the recorded producer for a resource ID.
 func (r *Render) ProducerForID(id resid.ResId) string {
 	return r.provenance[id.String()]
+}
+
+// ResourceViewForID returns a rendered resource and its fmp metadata.
+func (r *Render) ResourceViewForID(id resid.ResId) (ResourceView, bool) {
+	res, _ := r.GetByCurrentId(id)
+	if res == nil {
+		return ResourceView{}, false
+	}
+	obj, _ := res.Map()
+	return ResourceView{
+		ID:        id,
+		Kind:      res.GetKind(),
+		Name:      res.GetName(),
+		Namespace: res.GetNamespace(),
+		Producer:  r.ProducerForID(id),
+		Object:    obj,
+		YAML:      res.MustYaml(),
+	}, true
 }
 
 func duplicateWarning(id, existingProducer, newProducer, source string) error {

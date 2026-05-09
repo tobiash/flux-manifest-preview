@@ -200,37 +200,22 @@ func executeAction(log logr.Logger, req *githubaction.Request) (*githubaction.Ac
 	}
 
 	fullDiff := diffText.String()
-	preview, truncated := githubaction.TruncateDiff(fullDiff, req.MaxInlineDiffBytes, req.DiffPreviewLines)
 
-	report := &githubaction.ActionReport{
-		Status:            githubaction.StatusFromCounts(result.TotalChanged() > 0, 0, 0),
-		Changed:           result.TotalChanged() > 0,
-		DiffBytes:         len(fullDiff),
-		DiffTruncated:     truncated,
-		DiffPreview:       preview,
-		ResourcesAdded:    len(result.Added),
-		ResourcesModified: len(result.Modified),
-		ResourcesDeleted:  len(result.Deleted),
-		ResourcesTotal:    result.TotalChanged(),
-		ByKind:            result.ByKind(),
-		KindBreakdown:     buildKindBreakdown(result),
-		ByCluster:         buildClusterBreakdown(result),
-	}
-
+	var policyResult *policy.Result
 	if cfg != nil {
-		policyResult, err := policy.Evaluate(context.Background(), result, cfg.Policies, policyBaseDir(req.ConfigRoot(), cfg))
+		var err error
+		policyResult, err = policy.Evaluate(context.Background(), result, cfg.Policies, policyBaseDir(req.ConfigRoot(), cfg))
 		if err != nil {
 			return nil, nil, fmt.Errorf("evaluating policies: %w", err)
 		}
-		report.Classifications = policyResult.Classifications
-		report.Violations = policyResult.Violations
-		report.Labels = policyResult.Labels
-		report.PolicyFailures = policyResult.PolicyFailures
-		report.PolicyFailed = policyResult.PolicyFailed
-		if report.PolicyFailed {
-			report.Status = githubaction.StatusError
-		}
 	}
+	report := githubaction.BuildReport(githubaction.ReportInput{
+		Result:             result,
+		PolicyResult:       policyResult,
+		FullDiff:           fullDiff,
+		MaxInlineDiffBytes: req.MaxInlineDiffBytes,
+		DiffPreviewLines:   req.DiffPreviewLines,
+	})
 
 	// Handle exports
 	if req.ExportDir != "" {
@@ -243,71 +228,46 @@ func executeAction(log logr.Logger, req *githubaction.Request) (*githubaction.Ac
 }
 
 func buildActionOpts(log logr.Logger, req *githubaction.Request, cfg *config.Config) ([]preview.Opt, error) {
-
 	paths := req.Paths
 	if len(paths) == 0 && cfg != nil && len(cfg.Paths) > 0 {
 		paths = cfg.Paths
 	}
 
-	// Merge config values when action inputs are at their defaults (false)
-	recursive := req.Recursive
-	renderHelm := req.RenderHelm
-	sort := req.Sort
-	excludeCRDs := req.ExcludeCRDs
+	s := resolvedSettings{
+		paths:       paths,
+		recursive:   req.Recursive,
+		renderHelm:  req.RenderHelm,
+		resolveGit:  req.ResolveGit,
+		sort:        req.Sort,
+		excludeCRDs: req.ExcludeCRDs,
+		helmRelease: req.HelmRelease,
+	}
+
 	clusterPaths := req.ClusterPaths
 	if cfg != nil {
-		if len(paths) == 0 && len(clusterPaths) == 0 && cfg.ClusterPaths() != nil {
+		if len(s.paths) == 0 && len(clusterPaths) == 0 && cfg.ClusterPaths() != nil {
 			clusterPaths = cfg.ClusterPaths()
 		}
-		if !recursive && cfg.Recursive != nil {
-			recursive = *cfg.Recursive
+		if !s.recursive && cfg.Recursive != nil {
+			s.recursive = *cfg.Recursive
 		}
-		if !renderHelm && cfg.Helm != nil {
-			renderHelm = *cfg.Helm
+		if !s.renderHelm && cfg.Helm != nil {
+			s.renderHelm = *cfg.Helm
 		}
-		if !sort && cfg.Sort != nil {
-			sort = *cfg.Sort
+		if !s.sort && cfg.Sort != nil {
+			s.sort = *cfg.Sort
 		}
-		if !excludeCRDs && cfg.ExcludeCRDs != nil {
-			excludeCRDs = *cfg.ExcludeCRDs
+		if !s.excludeCRDs && cfg.ExcludeCRDs != nil {
+			s.excludeCRDs = *cfg.ExcludeCRDs
 		}
 	}
+	s.clusterPaths = clusterPaths
 
-	opts := []preview.Opt{
-		preview.WithLogger(log),
-	}
-	if len(clusterPaths) > 0 {
-		opts = append(opts, preview.WithClusterPaths(clusterPaths))
-	} else {
-		opts = append(opts, preview.WithPaths(paths, recursive))
-	}
-
-	if req.ResolveGit {
-		opts = append(opts, preview.WithGitRepo())
-	}
-
-	opts = append(opts, preview.WithFluxKS())
-
-	if renderHelm {
-		opts = append(opts, preview.WithHelm(helmSettings()))
-	}
-
-	if sort {
-		opts = append(opts, preview.WithSort())
-	}
-
-	if excludeCRDs {
-		opts = append(opts, preview.WithExcludeCRDs())
-	}
-
-	// SOPSDecrypt is blocked at request parsing; this is a defense-in-depth check
 	if req.SOPSDecrypt {
 		return nil, fmt.Errorf("sops-decrypt is not supported in GitHub Action mode")
 	}
 
-	if req.HelmRelease != "" {
-		opts = append(opts, preview.WithHelmReleaseFilter(req.HelmRelease))
-	}
+	opts := optsFromSettings(log, s)
 
 	if req.FilterFile != "" {
 		f, err := os.Open(req.FilterFile)

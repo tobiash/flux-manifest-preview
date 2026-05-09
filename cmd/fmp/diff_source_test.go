@@ -124,7 +124,7 @@ func TestRunDiff_NoArgsComparesHeadToWorktree(t *testing.T) {
 
 	var summary bytes.Buffer
 	var diffOut bytes.Buffer
-	if err := runDiff(logr.Discard(), nil, &summary, &diffOut); err != nil {
+	if err := runDiff(nil, logr.Discard(), nil, &summary, &diffOut); err != nil {
 		t.Fatalf("runDiff() error = %v", err)
 	}
 	if !strings.Contains(summary.String(), "Mostly in-place changes detected.") {
@@ -185,7 +185,7 @@ spec:
 
 	var summary bytes.Buffer
 	var diffOut bytes.Buffer
-	if err := runDiff(logr.Discard(), nil, &summary, &diffOut); err != nil {
+	if err := runDiff(nil, logr.Discard(), nil, &summary, &diffOut); err != nil {
 		t.Fatalf("runDiff() error = %v", err)
 	}
 	if !strings.Contains(summary.String(), "Mostly in-place changes detected.") {
@@ -236,7 +236,7 @@ policies:
 
 	var summary bytes.Buffer
 	var diffOut bytes.Buffer
-	err = runDiff(logr.Discard(), nil, &summary, &diffOut)
+	err = runDiff(nil, logr.Discard(), nil, &summary, &diffOut)
 	if err == nil {
 		t.Fatal("expected policy failure")
 	}
