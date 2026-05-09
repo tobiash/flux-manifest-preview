@@ -14,6 +14,51 @@ import (
 	"sigs.k8s.io/kustomize/kyaml/resid"
 )
 
+const ProducerAnnotation = "fmp.tobiash.github.io/producer"
+
+// Provenance identifies the Flux rendering source that produced a resource.
+type Provenance struct {
+	Kind      string
+	Name      string
+	Namespace string
+	Path      string
+	Text      string
+}
+
+// String returns the stable display form used by reports and policy checks.
+func (p Provenance) String() string {
+	if p.Text != "" {
+		return p.Text
+	}
+	switch {
+	case p.Kind == "HelmRelease" && p.Namespace != "" && p.Name != "":
+		return fmt.Sprintf("HelmRelease %s/%s", p.Namespace, p.Name)
+	case p.Kind != "" && p.Namespace != "" && p.Name != "":
+		return fmt.Sprintf("%s %s/%s", p.Kind, p.Namespace, p.Name)
+	case p.Kind != "" && p.Name != "":
+		return fmt.Sprintf("%s %s", p.Kind, p.Name)
+	case p.Path != "":
+		return fmt.Sprintf("path %s", p.Path)
+	default:
+		return ""
+	}
+}
+
+// PathProvenance describes resources rendered from an explicit path.
+func PathProvenance(path string) Provenance {
+	return Provenance{Kind: "Path", Path: path, Text: fmt.Sprintf("path %s", path)}
+}
+
+// TextProvenance preserves existing producer strings while centralizing provenance storage.
+func TextProvenance(text string) Provenance {
+	return Provenance{Text: text}
+}
+
+// HelmReleaseProvenance describes resources rendered from a Flux HelmRelease.
+func HelmReleaseProvenance(namespace, name string) Provenance {
+	return Provenance{Kind: "HelmRelease", Namespace: namespace, Name: name}
+}
+
 // MatchGVK reports true if the resource's GVK matches the target by group and kind.
 // Version is ignored because Flux resources exist in multiple API versions.
 func MatchGVK(resGvk, target resid.Gvk) bool {
@@ -26,18 +71,19 @@ type Render struct {
 	kustomizer *krusty.Kustomizer
 	log        logr.Logger
 	warnings   []error
-	provenance map[string]string
+	provenance map[string]Provenance
 }
 
 // ResourceView is the domain view of a rendered Kubernetes resource plus fmp metadata.
 type ResourceView struct {
-	ID        resid.ResId
-	Kind      string
-	Name      string
-	Namespace string
-	Producer  string
-	Object    map[string]any
-	YAML      string
+	ID         resid.ResId
+	Kind       string
+	Name       string
+	Namespace  string
+	Provenance Provenance
+	Producer   string
+	Object     map[string]any
+	YAML       string
 }
 
 // NewDefaultRender creates a Render with default kustomize options.
@@ -46,13 +92,13 @@ func NewDefaultRender(log logr.Logger) *Render {
 		ResMap:     resmap.New(),
 		kustomizer: krusty.MakeKustomizer(krusty.MakeDefaultOptions()),
 		log:        log,
-		provenance: make(map[string]string),
+		provenance: make(map[string]Provenance),
 	}
 }
 
 // AddKustomization runs kustomize on the given path and appends the results.
 func (r *Render) AddKustomization(fSys filesys.FileSystem, path string) error {
-	return r.AddKustomizationWithProducer(fSys, path, fmt.Sprintf("path %s", path))
+	return r.AddKustomizationWithProducer(fSys, path, PathProvenance(path).String())
 }
 
 // AddKustomizationWithProducer runs kustomize on the given path and records the producer.
@@ -69,7 +115,7 @@ func (r *Render) AddKustomizationWithProducer(fSys filesys.FileSystem, path, pro
 // it is processed as a kustomize base. Otherwise all .yaml/.yml files in the
 // directory are loaded as raw Kubernetes manifests.
 func (r *Render) AddPath(fSys filesys.FileSystem, path string) error {
-	return r.AddPathWithProducer(fSys, path, fmt.Sprintf("path %s", path))
+	return r.AddPathWithProducer(fSys, path, PathProvenance(path).String())
 }
 
 // AddPathWithProducer loads resources from a path and records the producer.
@@ -116,20 +162,20 @@ func (r *Render) absorbResMap(source, producer string, src resmap.ResMap) error 
 	for _, res := range src.Resources() {
 		id := res.CurId()
 		idKey := id.String()
-		newProducer := producerForResource(res, producer)
+		newProvenance := provenanceForResource(res, TextProvenance(producer))
 		if existing, err := r.GetById(id); err == nil {
-			existingProducer := r.provenance[idKey]
-			if existingProducer == "" {
-				existingProducer = producerForResource(existing, "existing resources")
+			existingProvenance := r.provenance[idKey]
+			if existingProvenance.String() == "" {
+				existingProvenance = provenanceForResource(existing, TextProvenance("existing resources"))
 			}
 			_ = r.Remove(existing.CurId())
-			r.warnings = append(r.warnings, duplicateWarning(id.String(), existingProducer, newProducer, source))
+			r.warnings = append(r.warnings, duplicateWarning(id.String(), existingProvenance.String(), newProvenance.String(), source))
 			r.log.V(1).Info("replacing duplicate resource", "id", id)
 		}
 		if err := r.Append(res); err != nil {
 			return err
 		}
-		r.provenance[idKey] = newProducer
+		r.provenance[idKey] = newProvenance
 	}
 	return nil
 }
@@ -151,7 +197,7 @@ func (r *Render) AbsorbAll(src resmap.ResMap) error {
 // When a directory is processed as a kustomize base, its subdirectories are
 // not recursed into because kustomize already handles resource loading.
 func (r *Render) AddPaths(fSys filesys.FileSystem, root string) error {
-	return r.AddPathsWithProducer(fSys, root, fmt.Sprintf("path %s", root))
+	return r.AddPathsWithProducer(fSys, root, PathProvenance(root).String())
 }
 
 // AddPathsWithProducer recursively loads resources from a directory and records the producer.
@@ -193,12 +239,12 @@ func (r *Render) AddPathsWithProducer(fSys filesys.FileSystem, root, producer st
 // MarkProvenanceToNew records producer metadata for resources added after count.
 func (r *Render) MarkProvenanceToNew(count int, producer string) {
 	for _, res := range r.Resources()[count:] {
-		r.provenance[res.CurId().String()] = producerForResource(res, producer)
+		r.provenance[res.CurId().String()] = provenanceForResource(res, TextProvenance(producer))
 	}
 }
 
-// ProducerForID returns the recorded producer for a resource ID.
-func (r *Render) ProducerForID(id resid.ResId) string {
+// ProvenanceForID returns the structured provenance for a resource ID.
+func (r *Render) ProvenanceForID(id resid.ResId) Provenance {
 	return r.provenance[id.String()]
 }
 
@@ -209,14 +255,16 @@ func (r *Render) ResourceViewForID(id resid.ResId) (ResourceView, bool) {
 		return ResourceView{}, false
 	}
 	obj, _ := res.Map()
+	provenance := r.ProvenanceForID(id)
 	return ResourceView{
-		ID:        id,
-		Kind:      res.GetKind(),
-		Name:      res.GetName(),
-		Namespace: res.GetNamespace(),
-		Producer:  r.ProducerForID(id),
-		Object:    obj,
-		YAML:      res.MustYaml(),
+		ID:         id,
+		Kind:       res.GetKind(),
+		Name:       res.GetName(),
+		Namespace:  res.GetNamespace(),
+		Provenance: provenance,
+		Producer:   provenance.String(),
+		Object:     obj,
+		YAML:       res.MustYaml(),
 	}, true
 }
 
@@ -233,17 +281,19 @@ func duplicateWarning(id, existingProducer, newProducer, source string) error {
 	return fmt.Errorf("duplicate resource %s produced by %s replaced an existing resource produced by %s", id, newProducer, existingProducer)
 }
 
-func producerForResource(res *resource.Resource, fallback string) string {
+func provenanceForResource(res *resource.Resource, fallback Provenance) Provenance {
+	annotations := res.GetAnnotations()
+	if producer := annotations[ProducerAnnotation]; producer != "" {
+		return TextProvenance(producer)
+	}
+
 	labels := res.GetLabels()
 	if name := labels["helm.toolkit.fluxcd.io/name"]; name != "" {
 		ns := labels["helm.toolkit.fluxcd.io/namespace"]
 		if ns == "" {
 			ns = res.GetNamespace()
 		}
-		if ns != "" {
-			return fmt.Sprintf("HelmRelease %s/%s", ns, name)
-		}
-		return fmt.Sprintf("HelmRelease %s", name)
+		return HelmReleaseProvenance(ns, name)
 	}
 	return fallback
 }

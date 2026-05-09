@@ -20,21 +20,22 @@ func BuildReport(input ReportInput) *ActionReport {
 	if result == nil {
 		return &ActionReport{Status: StatusError}
 	}
+	summary := result.Summary()
 
 	preview, truncated := TruncateDiff(input.FullDiff, input.MaxInlineDiffBytes, input.DiffPreviewLines)
 	report := &ActionReport{
-		Status:            StatusFromCounts(result.TotalChanged() > 0, 0, 0),
-		Changed:           result.TotalChanged() > 0,
+		Status:            StatusFromCounts(summary.Total > 0, 0, 0),
+		Changed:           summary.Total > 0,
 		DiffBytes:         len(input.FullDiff),
 		DiffTruncated:     truncated,
 		DiffPreview:       preview,
 		ResourcesAdded:    len(result.Added),
 		ResourcesModified: len(result.Modified),
 		ResourcesDeleted:  len(result.Deleted),
-		ResourcesTotal:    result.TotalChanged(),
-		ByKind:            result.ByKind(),
-		KindBreakdown:     diff.KindBreakdown(result),
-		ByCluster:         diff.ClusterBreakdown(result),
+		ResourcesTotal:    summary.Total,
+		ByKind:            summary.ByKind,
+		KindBreakdown:     summary.KindBreakdown,
+		ByCluster:         summary.ClusterBreakdown,
 	}
 	applyPolicyResult(report, input.PolicyResult)
 	return report

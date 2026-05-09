@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/go-logr/logr"
+	fmprender "github.com/tobiash/flux-manifest-preview/pkg/render"
 	"helm.sh/helm/v4/pkg/action"
 	chartcommon "helm.sh/helm/v4/pkg/chart/common"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
@@ -89,6 +90,13 @@ func (r *Runner) RenderCharts(ctx context.Context, releases []RenderTask) (resma
 			continue
 		}
 		for _, res := range chartResult.resources.Resources() {
+			annotations := res.GetAnnotations()
+			if annotations == nil {
+				annotations = make(map[string]string)
+			}
+			annotations[fmprender.ProducerAnnotation] = helmReleaseProducer(chartResult.task)
+			_ = res.SetAnnotations(annotations)
+
 			labels := res.GetLabels()
 			if labels == nil {
 				labels = make(map[string]string)
@@ -103,6 +111,13 @@ func (r *Runner) RenderCharts(ctx context.Context, releases []RenderTask) (resma
 		}
 	}
 	return res, errs, nil
+}
+
+func helmReleaseProducer(task RenderTask) string {
+	if task.namespace != "" {
+		return fmt.Sprintf("HelmRelease %s/%s", task.namespace, task.releaseName)
+	}
+	return fmt.Sprintf("HelmRelease %s", task.releaseName)
 }
 
 func (r *Runner) renderChart(ctx context.Context, t *RenderTask) (resmap.ResMap, error) {

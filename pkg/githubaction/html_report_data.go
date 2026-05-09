@@ -10,7 +10,6 @@ import (
 
 	fmpdiff "github.com/tobiash/flux-manifest-preview/pkg/diff"
 	"github.com/tobiash/flux-manifest-preview/pkg/policy"
-	"sigs.k8s.io/yaml"
 )
 
 type HTMLReportData struct {
@@ -101,10 +100,7 @@ func BuildHTMLReportData(req *Request, report *ActionReport, result *fmpdiff.Dif
 		return data
 	}
 
-	resources := make([]HTMLResourceChange, 0, result.TotalChanged())
-	resources = append(resources, htmlResourceChanges(result.Added, req.HTMLReportMaxResourceDiffBytes)...)
-	resources = append(resources, htmlResourceChanges(result.Modified, req.HTMLReportMaxResourceDiffBytes)...)
-	resources = append(resources, htmlResourceChanges(result.Deleted, req.HTMLReportMaxResourceDiffBytes)...)
+	resources := htmlResourceChanges(result.Changes(), req.HTMLReportMaxResourceDiffBytes)
 	sort.Slice(resources, func(i, j int) bool {
 		return resourceSortKey(resources[i]) < resourceSortKey(resources[j])
 	})
@@ -118,10 +114,7 @@ func BuildHTMLReportData(req *Request, report *ActionReport, result *fmpdiff.Dif
 func htmlResourceChanges(changes []fmpdiff.ResourceChange, maxDiffBytes int) []HTMLResourceChange {
 	out := make([]HTMLResourceChange, 0, len(changes))
 	for _, change := range changes {
-		before := yamlMap(change.Old)
-		after := yamlMap(change.New)
-		name := change.ID.String()
-		unified := fmpdiff.UnifiedDiff(name, before, after)
+		unified := change.UnifiedDiff()
 		truncated := false
 		if maxDiffBytes > 0 && len(unified) > maxDiffBytes {
 			unified = unified[:maxDiffBytes]
@@ -154,17 +147,6 @@ func resourceSortKey(r HTMLResourceChange) string {
 
 func resourceIdentity(cluster, producer, apiVersion, kind, namespace, name string) string {
 	return strings.Join([]string{cluster, producer, apiVersion, kind, namespace, name}, "|")
-}
-
-func yamlMap(m map[string]any) string {
-	if m == nil {
-		return ""
-	}
-	b, err := yaml.Marshal(m)
-	if err != nil {
-		return ""
-	}
-	return string(b)
 }
 
 func parseUnifiedDiffRows(unified string) []HTMLDiffRow {

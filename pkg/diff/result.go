@@ -1,7 +1,6 @@
 package diff
 
 import (
-	"bytes"
 	"encoding/json"
 	"io"
 	"sort"
@@ -39,29 +38,76 @@ type DiffChangeJSON struct {
 
 // ResourceChange describes a single resource change in a diff.
 type ResourceChange struct {
-	Cluster   string
-	ID        resid.ResId
-	Kind      string
-	Name      string
-	Namespace string
-	Producer  string
-	Action    string // added, deleted, modified
-	Old       map[string]any
-	New       map[string]any
-	oldYAML   string
-	newYAML   string
+	Cluster    string
+	ID         resid.ResId
+	Kind       string
+	Name       string
+	Namespace  string
+	Provenance render.Provenance
+	Producer   string
+	Action     string // added, deleted, modified
+	Old        map[string]any
+	New        map[string]any
+	oldYAML    string
+	newYAML    string
 }
 
 // DiffResult holds the structured result of a diff between two renders.
 type DiffResult struct {
-	Added    []ResourceChange
-	Deleted  []ResourceChange
-	Modified []ResourceChange
+	Clustered bool
+	Clusters  []string
+	Added     []ResourceChange
+	Deleted   []ResourceChange
+	Modified  []ResourceChange
+}
+
+// ResultSummary contains precomputed projections of a rendered manifest diff.
+type ResultSummary struct {
+	Total            int
+	Clustered        bool
+	Clusters         []string
+	ByKind           map[string]int
+	KindBreakdown    map[string]ChangeBreakdown
+	ClusterBreakdown map[string]ChangeBreakdown
 }
 
 // TotalChanged returns the total number of changed resources.
 func (r *DiffResult) TotalChanged() int {
 	return len(r.Added) + len(r.Deleted) + len(r.Modified)
+}
+
+// Changes returns all resource changes in added, modified, deleted order.
+func (r *DiffResult) Changes() []ResourceChange {
+	changes := make([]ResourceChange, 0, r.TotalChanged())
+	changes = append(changes, r.Added...)
+	changes = append(changes, r.Modified...)
+	changes = append(changes, r.Deleted...)
+	return changes
+}
+
+// Summary returns common diff projections for reports and command output.
+func (r *DiffResult) Summary() ResultSummary {
+	return ResultSummary{
+		Total:            r.TotalChanged(),
+		Clustered:        r.Clustered,
+		Clusters:         append([]string(nil), r.Clusters...),
+		ByKind:           r.ByKind(),
+		KindBreakdown:    KindBreakdown(r),
+		ClusterBreakdown: ClusterBreakdown(r),
+	}
+}
+
+// UnifiedDiff returns the per-resource unified diff text for the change.
+func (c ResourceChange) UnifiedDiff() string {
+	before := c.oldYAML
+	if before == "" {
+		before = mustYAMLMap(c.Old)
+	}
+	after := c.newYAML
+	if after == "" {
+		after = mustYAMLMap(c.New)
+	}
+	return UnifiedDiff(c.ID.String(), before, after)
 }
 
 // ChangeBreakdown holds added/modified/deleted counts for a category like kind.
@@ -124,21 +170,6 @@ func (r *DiffResult) ByKind() map[string]int {
 	return m
 }
 
-// ByCluster returns counts grouped by cluster name.
-func (r *DiffResult) ByCluster() map[string]int {
-	m := make(map[string]int)
-	for _, c := range r.Added {
-		m[c.Cluster]++
-	}
-	for _, c := range r.Deleted {
-		m[c.Cluster]++
-	}
-	for _, c := range r.Modified {
-		m[c.Cluster]++
-	}
-	return m
-}
-
 // ToJSON converts the diff result to a JSON-serializable structure.
 func (r *DiffResult) ToJSON() *DiffResultJSON {
 	out := &DiffResultJSON{}
@@ -154,11 +185,6 @@ func (r *DiffResult) ToJSON() *DiffResultJSON {
 		})
 	}
 	for _, c := range r.Modified {
-		var diffBuf bytes.Buffer
-		oldYAML := mustYAMLMap(c.Old)
-		newYAML := mustYAMLMap(c.New)
-		u := computeDiff(c.ID.String(), oldYAML, newYAML)
-		formatUnified(&diffBuf, u)
 		out.Modified = append(out.Modified, DiffChangeJSON{
 			ObjectRef: ObjectRef{
 				APIVersion: gvkAPIVersion(c.ID.Group, c.ID.Version),
@@ -170,7 +196,7 @@ func (r *DiffResult) ToJSON() *DiffResultJSON {
 			Producer:    c.Producer,
 			Old:         c.Old,
 			New:         c.New,
-			UnifiedDiff: diffBuf.String(),
+			UnifiedDiff: c.UnifiedDiff(),
 		})
 	}
 	return out
@@ -223,14 +249,15 @@ func ChangeSet(a, b *render.Render) (*DiffResult, error) {
 			continue
 		}
 		fmpResult.Added = append(fmpResult.Added, ResourceChange{
-			ID:        id,
-			Kind:      view.Kind,
-			Name:      view.Name,
-			Namespace: view.Namespace,
-			Producer:  view.Producer,
-			Action:    "added",
-			New:       view.Object,
-			newYAML:   view.YAML,
+			ID:         id,
+			Kind:       view.Kind,
+			Name:       view.Name,
+			Namespace:  view.Namespace,
+			Provenance: view.Provenance,
+			Producer:   view.Producer,
+			Action:     "added",
+			New:        view.Object,
+			newYAML:    view.YAML,
 		})
 	}
 
@@ -241,14 +268,15 @@ func ChangeSet(a, b *render.Render) (*DiffResult, error) {
 			continue
 		}
 		fmpResult.Deleted = append(fmpResult.Deleted, ResourceChange{
-			ID:        id,
-			Kind:      view.Kind,
-			Name:      view.Name,
-			Namespace: view.Namespace,
-			Producer:  view.Producer,
-			Action:    "deleted",
-			Old:       view.Object,
-			oldYAML:   view.YAML,
+			ID:         id,
+			Kind:       view.Kind,
+			Name:       view.Name,
+			Namespace:  view.Namespace,
+			Provenance: view.Provenance,
+			Producer:   view.Producer,
+			Action:     "deleted",
+			Old:        view.Object,
+			oldYAML:    view.YAML,
 		})
 	}
 
@@ -270,16 +298,17 @@ func ChangeSet(a, b *render.Render) (*DiffResult, error) {
 		}
 
 		fmpResult.Modified = append(fmpResult.Modified, ResourceChange{
-			ID:        id,
-			Kind:      after.Kind,
-			Name:      after.Name,
-			Namespace: after.Namespace,
-			Producer:  after.Producer,
-			Action:    "modified",
-			Old:       before.Object,
-			New:       after.Object,
-			oldYAML:   aYAML,
-			newYAML:   bYAML,
+			ID:         id,
+			Kind:       after.Kind,
+			Name:       after.Name,
+			Namespace:  after.Namespace,
+			Provenance: after.Provenance,
+			Producer:   after.Producer,
+			Action:     "modified",
+			Old:        before.Object,
+			New:        after.Object,
+			oldYAML:    aYAML,
+			newYAML:    bYAML,
 		})
 	}
 
@@ -336,8 +365,6 @@ func changeSortKey(change ResourceChange) string {
 // left side produce all-deleted results; clusters only on the right produce
 // all-added results.
 func DiffWithResultClustered(left, right map[string]*render.Render, w io.Writer) (*DiffResult, error) {
-	fmpResult := &DiffResult{}
-
 	allClusters := make(map[string]struct{})
 	for c := range left {
 		allClusters[c] = struct{}{}
@@ -351,6 +378,7 @@ func DiffWithResultClustered(left, right map[string]*render.Render, w io.Writer)
 		clusters = append(clusters, cluster)
 	}
 	sort.Strings(clusters)
+	fmpResult := &DiffResult{Clustered: true, Clusters: append([]string(nil), clusters...)}
 
 	for _, cluster := range clusters {
 		lr, lok := left[cluster]

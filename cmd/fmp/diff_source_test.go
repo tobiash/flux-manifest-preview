@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/go-logr/logr"
+
+	"github.com/tobiash/flux-manifest-preview/pkg/diffsource"
 )
 
 func TestResolveDiffPlan_DefaultsToHeadVsWorktree(t *testing.T) {
@@ -17,18 +19,18 @@ func TestResolveDiffPlan_DefaultsToHeadVsWorktree(t *testing.T) {
 	commitFile(t, repo, "kustomization.yaml", "resources:\n- configmap.yaml\n", "init")
 	commitFile(t, repo, "configmap.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test\ndata:\n  value: old\n", "add config")
 
-	plan, err := resolveDiffPlan(nil, repo)
+	plan, err := diffsource.ResolvePlan(nil, repo)
 	if err != nil {
 		t.Fatalf("resolveDiffPlan() error = %v", err)
 	}
-	if plan.configRoot != repo {
-		t.Fatalf("configRoot = %q, want %q", plan.configRoot, repo)
+	if plan.ConfigRoot != repo {
+		t.Fatalf("configRoot = %q, want %q", plan.ConfigRoot, repo)
 	}
-	if plan.left.kind != diffSourceRevision || plan.left.raw != "HEAD" {
-		t.Fatalf("left = %+v, want HEAD revision", plan.left)
+	if plan.Left.Kind != diffsource.KindRevision || plan.Left.Raw != "HEAD" {
+		t.Fatalf("left = %+v, want HEAD revision", plan.Left)
 	}
-	if plan.right.kind != diffSourceWorktree || plan.right.repoRoot != repo {
-		t.Fatalf("right = %+v, want worktree rooted at %q", plan.right, repo)
+	if plan.Right.Kind != diffsource.KindWorktree || plan.Right.RepoRoot != repo {
+		t.Fatalf("right = %+v, want worktree rooted at %q", plan.Right, repo)
 	}
 }
 
@@ -36,15 +38,15 @@ func TestResolveDiffPlan_TwoPathsPreferPaths(t *testing.T) {
 	left := t.TempDir()
 	right := t.TempDir()
 
-	plan, err := resolveDiffPlan([]string{left, right}, t.TempDir())
+	plan, err := diffsource.ResolvePlan([]string{left, right}, t.TempDir())
 	if err != nil {
 		t.Fatalf("resolveDiffPlan() error = %v", err)
 	}
-	if plan.left.kind != diffSourcePath || plan.right.kind != diffSourcePath {
-		t.Fatalf("expected path sources, got left=%q right=%q", plan.left.kind, plan.right.kind)
+	if plan.Left.Kind != diffsource.KindPath || plan.Right.Kind != diffsource.KindPath {
+		t.Fatalf("expected path sources, got left=%q right=%q", plan.Left.Kind, plan.Right.Kind)
 	}
-	if plan.configRoot != left {
-		t.Fatalf("configRoot = %q, want %q", plan.configRoot, left)
+	if plan.ConfigRoot != left {
+		t.Fatalf("configRoot = %q, want %q", plan.ConfigRoot, left)
 	}
 }
 
@@ -54,15 +56,15 @@ func TestResolveDiffPlan_TwoRevsUseGit(t *testing.T) {
 	commitFile(t, repo, "configmap.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test\ndata:\n  value: old\n", "add config")
 	commitFile(t, repo, "configmap.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: test\ndata:\n  value: new\n", "update config")
 
-	plan, err := resolveDiffPlan([]string{"HEAD~1", "HEAD"}, repo)
+	plan, err := diffsource.ResolvePlan([]string{"HEAD~1", "HEAD"}, repo)
 	if err != nil {
 		t.Fatalf("resolveDiffPlan() error = %v", err)
 	}
-	if plan.left.kind != diffSourceRevision || plan.right.kind != diffSourceRevision {
-		t.Fatalf("expected revision sources, got left=%q right=%q", plan.left.kind, plan.right.kind)
+	if plan.Left.Kind != diffsource.KindRevision || plan.Right.Kind != diffsource.KindRevision {
+		t.Fatalf("expected revision sources, got left=%q right=%q", plan.Left.Kind, plan.Right.Kind)
 	}
-	if plan.configRoot != repo {
-		t.Fatalf("configRoot = %q, want %q", plan.configRoot, repo)
+	if plan.ConfigRoot != repo {
+		t.Fatalf("configRoot = %q, want %q", plan.ConfigRoot, repo)
 	}
 }
 
@@ -71,7 +73,7 @@ func TestResolveDiffPlan_MixedImplicitSourcesRequirePrefixes(t *testing.T) {
 	commitFile(t, repo, "file.txt", "hello\n", "init")
 	other := t.TempDir()
 
-	_, err := resolveDiffPlan([]string{"HEAD", other}, repo)
+	_, err := diffsource.ResolvePlan([]string{"HEAD", other}, repo)
 	if err == nil {
 		t.Fatal("expected mixed implicit sources to fail")
 	}
@@ -85,8 +87,8 @@ func TestMaterializeRevision_CapturesCommittedState(t *testing.T) {
 	commitFile(t, repo, "tracked.txt", "old\n", "add tracked")
 	writeFile(t, repo, "tracked.txt", "new\n")
 
-	src := diffSource{kind: diffSourceRevision, raw: "HEAD", repoRoot: repo}
-	path, cleanup, err := src.materialize(context.Background())
+	src := diffsource.Source{Kind: diffsource.KindRevision, Raw: "HEAD", RepoRoot: repo}
+	path, cleanup, err := src.Materialize(context.Background())
 	if err != nil {
 		t.Fatalf("materialize() error = %v", err)
 	}

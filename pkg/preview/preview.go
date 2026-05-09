@@ -577,59 +577,20 @@ func WithSOPSDecrypt() Opt {
 // can be used to normalize these fields in subsequent diff/render runs.
 // Each render pass uses a fresh set of expanders to avoid cached state.
 func (p *Preview) DetectPermadiffs(ctx context.Context, path string, out io.Writer) error {
-	ar, err := p.freshLoadRepo(ctx, path)
-	if err != nil {
-		return fmt.Errorf("error loading repo (first pass): %w", err)
-	}
+	return normalizationDiscovery{preview: p, path: path}.WritePermadiffConfig(ctx, out)
+}
 
-	br, err := p.freshLoadRepo(ctx, path)
-	if err != nil {
-		return fmt.Errorf("error loading repo (second pass): %w", err)
-	}
-
-	if p.isClustered() {
-		for cluster := range ar {
-			if err := diff.WritePermadiffConfig(ar[cluster].render, br[cluster].render, out); err != nil {
-				return fmt.Errorf("cluster %q: %w", cluster, err)
-			}
-		}
-		return nil
-	}
-	return diff.WritePermadiffConfig(ar[""].render, br[""].render, out)
+// DiagnoseNormalization renders twice and returns non-deterministic fields with cluster context.
+func (p *Preview) DiagnoseNormalization(ctx context.Context, path string) (*NormalizationDiagnosis, error) {
+	return normalizationDiscovery{preview: p, path: path}.Diagnose(ctx)
 }
 
 // GenerateInitConfig renders the repo twice to detect permadiffs and
 // writes a complete .fmp.yaml config file to destPath.
 func (p *Preview) GenerateInitConfig(ctx context.Context, path, destPath string) error {
-	ar, err := p.freshLoadRepo(ctx, path)
+	diffs, err := normalizationDiscovery{preview: p, path: path}.Detect(ctx)
 	if err != nil {
-		return fmt.Errorf("error loading repo (first pass): %w", err)
-	}
-
-	br, err := p.freshLoadRepo(ctx, path)
-	if err != nil {
-		return fmt.Errorf("error loading repo (second pass): %w", err)
-	}
-
-	var renderA, renderB *render.Render
-	if p.isClustered() {
-		// For clustered mode, use the first cluster's render for permadiff detection
-		for _, r := range ar {
-			renderA = r.render
-			break
-		}
-		for _, r := range br {
-			renderB = r.render
-			break
-		}
-	} else {
-		renderA = ar[""].render
-		renderB = br[""].render
-	}
-
-	diffs, err := diff.DetectPermadiffs(renderA, renderB)
-	if err != nil {
-		return fmt.Errorf("detecting permadiffs: %w", err)
+		return err
 	}
 
 	type initConfig struct {

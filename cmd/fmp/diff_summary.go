@@ -19,7 +19,8 @@ func writeDiffSummary(out io.Writer, result *diff.DiffResult, policyResult *poli
 		return err
 	}
 
-	if result.TotalChanged() == 0 {
+	summary := result.Summary()
+	if summary.Total == 0 {
 		_, err := fmt.Fprintln(out, "✅ No resource changes.")
 		return err
 	}
@@ -34,7 +35,7 @@ func writeDiffSummary(out io.Writer, result *diff.DiffResult, policyResult *poli
 		return err
 	}
 
-	rows := sortedKindBreakdownRows(diff.KindBreakdown(result))
+	rows := sortedKindBreakdownRows(summary.KindBreakdown)
 	if len(rows) == 0 {
 		return nil
 	}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/go-logr/logr"
 	"github.com/sethvargo/go-githubactions"
@@ -14,8 +15,8 @@ import (
 
 	"github.com/tobiash/flux-manifest-preview/pkg/config"
 	"github.com/tobiash/flux-manifest-preview/pkg/diff"
+	"github.com/tobiash/flux-manifest-preview/pkg/diffsource"
 	"github.com/tobiash/flux-manifest-preview/pkg/githubaction"
-	"github.com/tobiash/flux-manifest-preview/pkg/policy"
 	"github.com/tobiash/flux-manifest-preview/pkg/preview"
 )
 
@@ -164,8 +165,19 @@ func runGitHubAction(cmd *cobra.Command, args []string) error {
 
 func executeAction(log logr.Logger, req *githubaction.Request) (*githubaction.ActionReport, *diff.DiffResult, error) {
 	var diffText bytes.Buffer
+	ctx := context.Background()
 
-	cfg, err := loadActionConfig(req)
+	plan, err := actionDiffPlan(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	materialized, cleanup, err := plan.Materialize(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer cleanup()
+
+	cfg, err := loadActionConfig(req, materialized.ConfigRoot)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -180,10 +192,20 @@ func executeAction(log logr.Logger, req *githubaction.Request) (*githubaction.Ac
 		return nil, nil, fmt.Errorf("creating preview: %w", err)
 	}
 
-	left := req.DiffLeft()
-	right := req.DiffRight()
+	var policies *config.PolicyConfig
+	var policyDir string
+	if cfg != nil {
+		policies = cfg.Policies
+		policyDir = policyBaseDir(materialized.ConfigRoot, cfg)
+	}
 
-	result, err := p.DiffResult(context.Background(), left, right, &diffText)
+	run, err := p.RunDiff(ctx, preview.DiffRunOptions{
+		LeftPath:      materialized.LeftPath,
+		RightPath:     materialized.RightPath,
+		DiffWriter:    &diffText,
+		Policies:      policies,
+		PolicyBaseDir: policyDir,
+	})
 	if err != nil {
 		// Try to produce a partial report even on error
 		report := &githubaction.ActionReport{
@@ -199,20 +221,10 @@ func executeAction(log logr.Logger, req *githubaction.Request) (*githubaction.Ac
 		return report, nil, err
 	}
 
-	fullDiff := diffText.String()
-
-	var policyResult *policy.Result
-	if cfg != nil {
-		var err error
-		policyResult, err = policy.Evaluate(context.Background(), result, cfg.Policies, policyBaseDir(req.ConfigRoot(), cfg))
-		if err != nil {
-			return nil, nil, fmt.Errorf("evaluating policies: %w", err)
-		}
-	}
 	report := githubaction.BuildReport(githubaction.ReportInput{
-		Result:             result,
-		PolicyResult:       policyResult,
-		FullDiff:           fullDiff,
+		Result:             run.Result,
+		PolicyResult:       run.PolicyResult,
+		FullDiff:           run.DiffText,
 		MaxInlineDiffBytes: req.MaxInlineDiffBytes,
 		DiffPreviewLines:   req.DiffPreviewLines,
 	})
@@ -224,7 +236,36 @@ func executeAction(log logr.Logger, req *githubaction.Request) (*githubaction.Ac
 		// TODO: implement manifest export from rendered target resources
 	}
 
-	return report, result, nil
+	return report, run.Result, nil
+}
+
+func actionDiffPlan(req *githubaction.Request) (*diffsource.Plan, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("determining current directory: %w", err)
+	}
+	return diffsource.ResolvePlan([]string{
+		actionDiffTarget(req.DiffLeft(), cwd),
+		actionDiffTarget(req.DiffRight(), cwd),
+	}, cwd)
+}
+
+func actionDiffTarget(target, cwd string) string {
+	if hasDiffSourcePrefix(target) {
+		return target
+	}
+	path := target
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(cwd, path)
+	}
+	if _, err := os.Stat(path); err == nil {
+		return "path:" + target
+	}
+	return "git:" + target
+}
+
+func hasDiffSourcePrefix(target string) bool {
+	return strings.HasPrefix(target, "git:") || strings.HasPrefix(target, "path:")
 }
 
 func buildActionOpts(log logr.Logger, req *githubaction.Request, cfg *config.Config) ([]preview.Opt, error) {
@@ -285,8 +326,8 @@ func buildActionOpts(log logr.Logger, req *githubaction.Request, cfg *config.Con
 	return opts, nil
 }
 
-func loadActionConfig(req *githubaction.Request) (*config.Config, error) {
-	cfg, err := loadConfigForRepo(req.ConfigRoot(), req.ConfigFile)
+func loadActionConfig(req *githubaction.Request, configRoot string) (*config.Config, error) {
+	cfg, err := loadConfigForRepo(configRoot, req.ConfigFile)
 	if err != nil {
 		if req.ConfigFile != "" {
 			return nil, fmt.Errorf("loading config %s: %w", req.ConfigFile, err)
