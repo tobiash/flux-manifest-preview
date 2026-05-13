@@ -19,15 +19,16 @@ import (
 var builtinModule string
 
 type Classification struct {
-	ID        string `json:"id"`
-	Title     string `json:"title,omitempty"`
-	Severity  string `json:"severity,omitempty"`
-	Priority  int    `json:"priority,omitempty"`
-	Message   string `json:"message,omitempty"`
-	Cluster   string `json:"cluster,omitempty"`
-	Kind      string `json:"kind,omitempty"`
-	Namespace string `json:"namespace,omitempty"`
-	Name      string `json:"name,omitempty"`
+	ID         string `json:"id"`
+	Title      string `json:"title,omitempty"`
+	Severity   string `json:"severity,omitempty"`
+	Priority   int    `json:"priority,omitempty"`
+	Message    string `json:"message,omitempty"`
+	Provenance string `json:"provenance"`
+	Cluster    string `json:"cluster,omitempty"`
+	Kind       string `json:"kind,omitempty"`
+	Namespace  string `json:"namespace,omitempty"`
+	Name       string `json:"name,omitempty"`
 }
 
 type Violation struct {
@@ -121,11 +122,20 @@ func Evaluate(ctx context.Context, result *diff.DiffResult, cfg *config.PolicyCo
 		out.Labels = normalizeLabels(doc.Labels)
 	}
 
-	out.Labels = normalizeLabels(append(out.Labels, labelsFromMappings(cfg, out.Classifications, out.Violations)...))
-	out.PolicyFailures = matchedFailures(cfg.FailOn, out.Classifications, out.Violations)
-	out.PolicyFailed = len(out.PolicyFailures) > 0
+	ApplyEffects(out, cfg)
 
 	return out, nil
+}
+
+func ApplyEffects(result *Result, cfg *config.PolicyConfig) {
+	if result == nil || cfg == nil {
+		return
+	}
+	result.Classifications = normalizeClassifications(result.Classifications)
+	result.Violations = normalizeViolations(result.Violations)
+	result.Labels = normalizeLabels(append(result.Labels, labelsFromMappings(cfg, result.Classifications, result.Violations)...))
+	result.PolicyFailures = matchedFailures(cfg.FailOn, result.Classifications, result.Violations)
+	result.PolicyFailed = len(result.PolicyFailures) > 0
 }
 
 func hasPolicyConfig(cfg *config.PolicyConfig) bool {
@@ -209,12 +219,20 @@ func normalizeClassifications(items []Classification) []Classification {
 	if len(items) == 0 {
 		return nil
 	}
+	for i := range items {
+		if items[i].Provenance == "" {
+			items[i].Provenance = "policy"
+		}
+	}
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].Cluster != items[j].Cluster {
 			return items[i].Cluster < items[j].Cluster
 		}
 		if items[i].ID != items[j].ID {
 			return items[i].ID < items[j].ID
+		}
+		if items[i].Provenance != items[j].Provenance {
+			return items[i].Provenance < items[j].Provenance
 		}
 		if items[i].Kind != items[j].Kind {
 			return items[i].Kind < items[j].Kind

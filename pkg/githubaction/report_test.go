@@ -1,7 +1,10 @@
 package githubaction
 
 import (
+	"strings"
 	"testing"
+
+	"github.com/tobiash/flux-manifest-preview/pkg/policy"
 )
 
 func TestStatusFromCounts(t *testing.T) {
@@ -121,6 +124,24 @@ func TestTruncateDiff(t *testing.T) {
 	}
 	if len(preview) > 200 {
 		t.Errorf("byte truncation unexpectedly long: %d bytes", len(preview))
+	}
+}
+
+func TestRenderSummaryMarkdownSeparatesClassificationProvenance(t *testing.T) {
+	got := RenderSummaryMarkdown(&Request{}, &ActionReport{
+		Status:         StatusChanged,
+		Changed:        true,
+		ResourcesTotal: 2,
+		Classifications: []policy.Classification{
+			{ID: "image_update", Provenance: "policy"},
+			{ID: "image_update", Provenance: "ai"},
+		},
+	})
+	if !strings.Contains(got, "`image_update` [policy] (1)") {
+		t.Fatalf("expected policy classification count, got:\n%s", got)
+	}
+	if !strings.Contains(got, "`image_update` [ai] (1)") {
+		t.Fatalf("expected ai classification count, got:\n%s", got)
 	}
 }
 

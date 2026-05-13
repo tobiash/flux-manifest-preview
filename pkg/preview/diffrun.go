@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/tobiash/flux-manifest-preview/pkg/ai"
 	"github.com/tobiash/flux-manifest-preview/pkg/config"
 	"github.com/tobiash/flux-manifest-preview/pkg/diff"
 	"github.com/tobiash/flux-manifest-preview/pkg/policy"
@@ -19,6 +20,8 @@ type DiffRunOptions struct {
 	DiffWriter    io.Writer
 	Policies      *config.PolicyConfig
 	PolicyBaseDir string
+	AI            *config.AIConfig
+	AIAssessor    ai.Assessor
 }
 
 // DiffRunResult is the domain result used by CLI and GitHub Action adapters.
@@ -28,6 +31,7 @@ type DiffRunResult struct {
 	DiffText     string
 	Warnings     []string
 	PolicyResult *policy.Result
+	AIAssessment *ai.Assessment
 }
 
 // RunDiff renders both sides, computes the rendered manifest diff, and applies policy checks.
@@ -54,6 +58,22 @@ func (p *Preview) RunDiff(ctx context.Context, opts DiffRunOptions) (*DiffRunRes
 			return nil, fmt.Errorf("evaluating policies: %w", err)
 		}
 	}
+	if policyResult == nil {
+		policyResult = &policy.Result{}
+	}
+
+	aiAssessment, aiWarnings, err := runAIAssessment(ctx, opts, result, policyResult)
+	warnings = append(warnings, aiWarnings...)
+	if err != nil {
+		if ai.FailOnError(opts.AI) {
+			return nil, err
+		}
+		warnings = append(warnings, err.Error())
+	}
+	if aiAssessment != nil {
+		policyResult.Classifications = append(policyResult.Classifications, aiAssessment.Classifications...)
+		policy.ApplyEffects(policyResult, opts.Policies)
+	}
 
 	return &DiffRunResult{
 		Result:       result,
@@ -61,7 +81,26 @@ func (p *Preview) RunDiff(ctx context.Context, opts DiffRunOptions) (*DiffRunRes
 		DiffText:     diffText.String(),
 		Warnings:     warnings,
 		PolicyResult: policyResult,
+		AIAssessment: aiAssessment,
 	}, nil
+}
+
+func runAIAssessment(ctx context.Context, opts DiffRunOptions, result *diff.DiffResult, policyResult *policy.Result) (*ai.Assessment, []string, error) {
+	if !ai.Enabled(opts.AI) || result == nil || result.TotalChanged() == 0 {
+		return nil, nil, nil
+	}
+	assessor := opts.AIAssessor
+	if assessor == nil {
+		assessor = ai.NewLangChainAssessor()
+	}
+	assessment, err := assessor.Assess(ctx, ai.Request{Config: opts.AI, Result: result, PolicyResult: policyResult})
+	if err != nil {
+		return nil, nil, fmt.Errorf("ai assessment failed: %w", err)
+	}
+	if assessment == nil {
+		return nil, nil, nil
+	}
+	return assessment, assessment.Warnings, nil
 }
 
 func expansionWarnings(err error) []string {

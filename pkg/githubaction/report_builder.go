@@ -1,6 +1,7 @@
 package githubaction
 
 import (
+	"github.com/tobiash/flux-manifest-preview/pkg/ai"
 	"github.com/tobiash/flux-manifest-preview/pkg/diff"
 	"github.com/tobiash/flux-manifest-preview/pkg/policy"
 )
@@ -13,6 +14,7 @@ type ReportInput struct {
 	FullDiff           string
 	MaxInlineDiffBytes int
 	DiffPreviewLines   int
+	AIAssessment       *ai.Assessment
 }
 
 // BuildReport assembles the shared impact report used by CLI and GitHub Action adapters.
@@ -38,6 +40,7 @@ func BuildReport(input ReportInput) *ActionReport {
 		ByKind:            summary.ByKind,
 		KindBreakdown:     summary.KindBreakdown,
 		ByCluster:         summary.ClusterBreakdown,
+		AIAssessment:      input.AIAssessment,
 	}
 	applyPolicyResult(report, input.PolicyResult)
 	return report

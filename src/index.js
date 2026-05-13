@@ -17,6 +17,7 @@ async function run() {
 
   try {
     const binaryPath = await resolveBinaryPath()
+    maskAITokens()
 
     await core.group('Run fmp github-action', async () => {
       core.info(`Using fmp binary: ${binaryPath}`)
@@ -49,6 +50,15 @@ async function run() {
     }
   } catch (err) {
     core.setFailed(err instanceof Error ? err.message : String(err))
+  }
+}
+
+function maskAITokens() {
+  for (const name of ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'ZAI_API_KEY', 'MINIMAX_API_KEY', 'OPENROUTER_API_KEY']) {
+    const value = (process.env[name] || '').trim()
+    if (value !== '') {
+      core.setSecret(value)
+    }
   }
 }
 

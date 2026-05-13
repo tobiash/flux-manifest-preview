@@ -3,6 +3,7 @@ package githubaction
 import (
 	"strings"
 
+	"github.com/tobiash/flux-manifest-preview/pkg/ai"
 	"github.com/tobiash/flux-manifest-preview/pkg/diff"
 	"github.com/tobiash/flux-manifest-preview/pkg/policy"
 )
@@ -48,6 +49,7 @@ type ActionReport struct {
 	Labels          []string                `json:"labels,omitempty"`
 	PolicyFailures  []string                `json:"policy_failures,omitempty"`
 	PolicyFailed    bool                    `json:"policy_failed"`
+	AIAssessment    *ai.Assessment          `json:"ai_assessment,omitempty"`
 }
 
 // ChangeBreakdown is an alias for diff.ChangeBreakdown for backward compatibility.

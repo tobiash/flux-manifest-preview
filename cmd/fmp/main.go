@@ -38,6 +38,10 @@ var (
 	diffSummaryOnly bool
 	diffHTML        bool
 	diffHTMLOpen    bool
+	aiAssessment    bool
+	aiProvider      string
+	aiModel         string
+	aiFailOnError   bool
 	initConfig      bool
 
 	helmRegistryConfig   string
@@ -129,6 +133,10 @@ inputs, use explicit git: or path: prefixes.`,
 	diffCmd.Flags().BoolVar(&diffSummaryOnly, "summary-only", false, "Print only the human-readable summary and suppress the raw diff")
 	diffCmd.Flags().BoolVar(&diffHTML, "html", false, "Generate an HTML report and open it in the browser")
 	diffCmd.Flags().BoolVar(&diffHTMLOpen, "html-open", true, "Open the HTML report in the browser (use --html-open=false to suppress)")
+	diffCmd.Flags().BoolVar(&aiAssessment, "ai-assessment", false, "Enable optional AI assessment for rendered manifest changes")
+	diffCmd.Flags().StringVar(&aiProvider, "ai-provider", "", "AI provider to use (openai, anthropic, zai, minimax, openrouter)")
+	diffCmd.Flags().StringVar(&aiModel, "ai-model", "", "AI model override")
+	diffCmd.Flags().BoolVar(&aiFailOnError, "ai-fail-on-error", false, "Fail when AI assessment cannot be generated")
 	testCmd := &cobra.Command{
 		Use:   "test <path>",
 		Short: "Validate all Kustomizations build and HelmReleases render",

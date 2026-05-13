@@ -37,8 +37,43 @@ func TestEvaluateBuiltinsAndMappings(t *testing.T) {
 	if result.Classifications[0].Priority != 20 {
 		t.Fatalf("expected priority on classification, got %+v", result.Classifications[0])
 	}
+	if result.Classifications[0].Provenance != "policy" {
+		t.Fatalf("expected policy provenance, got %+v", result.Classifications[0])
+	}
 	if len(result.Labels) != 1 || result.Labels[0] != "image-update" {
 		t.Fatalf("expected mapped label, got %v", result.Labels)
+	}
+}
+
+func TestApplyEffectsUsesAIClassifications(t *testing.T) {
+	result := &Result{
+		Classifications: []Classification{{ID: "needs_ai_review", Provenance: "ai"}},
+	}
+	ApplyEffects(result, &config.PolicyConfig{
+		FailOn: []string{"needs_ai_review"},
+		Labels: map[string]config.LabelList{"needs_ai_review": {"ai-review"}},
+	})
+	if !result.PolicyFailed {
+		t.Fatal("expected AI classification to match fail-on")
+	}
+	if len(result.PolicyFailures) != 1 || result.PolicyFailures[0] != "needs_ai_review" {
+		t.Fatalf("expected needs_ai_review failure, got %v", result.PolicyFailures)
+	}
+	if len(result.Labels) != 1 || result.Labels[0] != "ai-review" {
+		t.Fatalf("expected ai-review label, got %v", result.Labels)
+	}
+}
+
+func TestEvaluateAllowsEffectsOnlyConfig(t *testing.T) {
+	result, err := Evaluate(context.Background(), &diff.DiffResult{}, &config.PolicyConfig{
+		FailOn: []string{"ai_only"},
+		Labels: map[string]config.LabelList{"ai_only": {"ai-review"}},
+	}, t.TempDir())
+	if err != nil {
+		t.Fatalf("Evaluate() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected empty policy result")
 	}
 }
 

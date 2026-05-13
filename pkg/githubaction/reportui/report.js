@@ -88,6 +88,7 @@
 		renderWarningSection();
 		renderClusterSection();
 		renderSingleClusterPolicySignals();
+		renderAIAssessment();
 		renderKindSection();
 		renderTopChanges();
 	}
@@ -208,6 +209,23 @@
 		const signals = uniquePolicySignals(policySignals());
 		if (signals.length === 0) return;
 		app.append(policyPills(signals));
+	}
+
+	function renderAIAssessment() {
+		if (!data.ai) return;
+		app.append(el("h2", { text: "AI Assessment" }));
+		const meta = [data.ai.provider, data.ai.model].filter(Boolean).join(" · ");
+		const children = [
+			el("div", { class: "card-title" }, [
+				el("strong", { text: "Generated review aid" }),
+				el("span", { class: "pill policy-signal info", text: "ai" }),
+			]),
+		];
+		if (meta) children.push(el("small", { text: meta }));
+		if (data.ai.summary) children.push(el("p", { text: data.ai.summary }));
+		if (data.ai.truncated)
+			children.push(el("small", { text: "AI input was truncated; assessment may not cover every diff detail." }));
+		app.append(el("section", { class: "card ai-card" }, children));
 	}
 
 	function renderKindSection() {

@@ -155,6 +155,10 @@ func runGitHubAction(cmd *cobra.Command, args []string) error {
 		act.SetOutput("violations-json", mustJSON(report.Violations))
 		act.SetOutput("labels-json", mustJSON(report.Labels))
 		act.SetOutput("policy-failed", fmt.Sprintf("%t", report.PolicyFailed))
+		act.SetOutput("ai-assessment-json", mustJSON(report.AIAssessment))
+		if report.AIAssessment != nil {
+			act.SetOutput("ai-summary", report.AIAssessment.Summary)
+		}
 	}
 
 	if req.ShouldFail(report) || report.PolicyFailed {
@@ -205,6 +209,7 @@ func executeAction(log logr.Logger, req *githubaction.Request) (*githubaction.Ac
 		DiffWriter:    &diffText,
 		Policies:      policies,
 		PolicyBaseDir: policyDir,
+		AI:            aiConfigForAction(req.AIAssessment, req.AIProvider, req.AIModel, req.AIFailOnError, cfg),
 	})
 	if err != nil {
 		// Try to produce a partial report even on error
@@ -228,6 +233,7 @@ func executeAction(log logr.Logger, req *githubaction.Request) (*githubaction.Ac
 		FullDiff:           run.DiffText,
 		MaxInlineDiffBytes: req.MaxInlineDiffBytes,
 		DiffPreviewLines:   req.DiffPreviewLines,
+		AIAssessment:       run.AIAssessment,
 	})
 
 	// Handle exports

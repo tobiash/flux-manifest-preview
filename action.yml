@@ -130,6 +130,22 @@ inputs:
     description: 'Subdirectory on the gh-pages branch to deploy reports to'
     required: false
     default: 'fmp-reports'
+  ai-assessment:
+    description: 'Enable optional AI assessment; empty inherits .fmp.yaml ai.enabled'
+    required: false
+    default: ''
+  ai-provider:
+    description: 'AI provider override: openai, anthropic, zai, minimax, or openrouter'
+    required: false
+    default: ''
+  ai-model:
+    description: 'AI model override'
+    required: false
+    default: ''
+  ai-fail-on-error:
+    description: 'Fail when AI assessment cannot be generated; empty inherits .fmp.yaml ai.fail-on-error'
+    required: false
+    default: ''
   fail-on-warning:
     description: 'Fail the step on warnings'
     required: false
@@ -189,13 +205,17 @@ outputs:
   export-dir:
     description: 'Directory where rendered manifests were exported'
   classifications-json:
-    description: 'JSON array of matched policy classifications'
+    description: 'JSON array of matched classifications with provenance'
   violations-json:
     description: 'JSON array of matched policy violations'
   labels-json:
     description: 'JSON array of suggested/applied pull request labels'
   policy-failed:
     description: 'Whether a configured fail-on policy matched'
+  ai-assessment-json:
+    description: 'JSON object for the AI assessment when generated'
+  ai-summary:
+    description: 'AI-generated summary when generated'
 
 runs:
   using: 'node24'

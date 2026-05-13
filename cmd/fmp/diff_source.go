@@ -14,6 +14,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/spf13/cobra"
 
+	"github.com/tobiash/flux-manifest-preview/pkg/ai"
 	"github.com/tobiash/flux-manifest-preview/pkg/config"
 	"github.com/tobiash/flux-manifest-preview/pkg/diff"
 	"github.com/tobiash/flux-manifest-preview/pkg/diffsource"
@@ -32,7 +33,9 @@ func validateDiffArgs(_ *cobra.Command, args []string) error {
 type diffExecResult struct {
 	result       *diff.DiffResult
 	diffText     string
+	warnings     []string
 	policyResult *policy.Result
+	aiAssessment *ai.Assessment
 	plan         *diffsource.Plan
 }
 
@@ -88,6 +91,7 @@ func executeDiff(cmd *cobra.Command, ctx context.Context, log logr.Logger, args 
 		RightPath:     materialized.RightPath,
 		Policies:      policies,
 		PolicyBaseDir: policyDir,
+		AI:            aiConfigForCommand(cmd, cfg),
 	})
 	if err != nil {
 		cleanup()
@@ -97,7 +101,9 @@ func executeDiff(cmd *cobra.Command, ctx context.Context, log logr.Logger, args 
 	return &diffExecResult{
 		result:       run.Result,
 		diffText:     run.DiffText,
+		warnings:     run.Warnings,
 		policyResult: run.PolicyResult,
+		aiAssessment: run.AIAssessment,
 		plan:         plan,
 	}, cleanup, nil
 }
@@ -111,6 +117,9 @@ func runDiff(cmd *cobra.Command, log logr.Logger, args []string, summaryOut io.W
 
 	if err := writeDiffSummary(summaryOut, dr.result, dr.policyResult); err != nil {
 		return fmt.Errorf("writing diff summary: %w", err)
+	}
+	if err := writeAISummary(summaryOut, dr.aiAssessment); err != nil {
+		return fmt.Errorf("writing ai summary: %w", err)
 	}
 	if _, err = io.Copy(diffOut, strings.NewReader(dr.diffText)); err != nil {
 		return err
@@ -130,10 +139,11 @@ func runDiffJSON(cmd *cobra.Command, log logr.Logger, args []string, out io.Writ
 
 	jsonResult := dr.result.ToJSON()
 	output := map[string]any{
-		"added":    jsonResult.Added,
-		"deleted":  jsonResult.Deleted,
-		"modified": jsonResult.Modified,
-		"policy":   dr.policyResult,
+		"added":         jsonResult.Added,
+		"deleted":       jsonResult.Deleted,
+		"modified":      jsonResult.Modified,
+		"policy":        dr.policyResult,
+		"ai_assessment": dr.aiAssessment,
 	}
 
 	enc := json.NewEncoder(out)
@@ -158,7 +168,9 @@ func runDiffHTML(cmd *cobra.Command, log logr.Logger, args []string) error {
 	report := githubaction.BuildReport(githubaction.ReportInput{
 		Result:       dr.result,
 		PolicyResult: dr.policyResult,
+		Warnings:     dr.warnings,
 		FullDiff:     dr.diffText,
+		AIAssessment: dr.aiAssessment,
 	})
 	req := &githubaction.Request{
 		BaseRef:                        dr.plan.Left.Label(),

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tobiash/flux-manifest-preview/pkg/ai"
 	fmpdiff "github.com/tobiash/flux-manifest-preview/pkg/diff"
 	"github.com/tobiash/flux-manifest-preview/pkg/policy"
 )
@@ -16,6 +17,7 @@ type HTMLReportData struct {
 	Meta      HTMLReportMeta       `json:"meta"`
 	Summary   HTMLReportSummary    `json:"summary"`
 	Policies  HTMLReportPolicies   `json:"policies"`
+	AI        *ai.Assessment       `json:"ai,omitempty"`
 	Resources []HTMLResourceChange `json:"resources"`
 }
 
@@ -96,6 +98,7 @@ func BuildHTMLReportData(req *Request, report *ActionReport, result *fmpdiff.Dif
 			PolicyFailures:  report.PolicyFailures,
 			PolicyFailed:    report.PolicyFailed,
 		},
+		AI: report.AIAssessment,
 	}
 
 	if result == nil {

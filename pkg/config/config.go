@@ -28,6 +28,7 @@ type Config struct {
 	Filters      filter.FilterConfig      `yaml:",inline"`
 	HelmSettings *HelmSettings            `yaml:"helm-settings,omitempty"`
 	Policies     *PolicyConfig            `yaml:"policies,omitempty"`
+	AI           *AIConfig                `yaml:"ai,omitempty"`
 	SourcePath   string                   `yaml:"-"`
 }
 
@@ -65,6 +66,18 @@ type PolicyConfig struct {
 	Inline  []string             `yaml:"inline,omitempty"`
 	FailOn  []string             `yaml:"fail-on,omitempty"`
 	Labels  map[string]LabelList `yaml:"labels,omitempty"`
+}
+
+type AIConfig struct {
+	Enabled                 *bool    `yaml:"enabled,omitempty"`
+	Provider                string   `yaml:"provider,omitempty"`
+	Model                   string   `yaml:"model,omitempty"`
+	FailOnError             *bool    `yaml:"fail-on-error,omitempty"`
+	Instructions            string   `yaml:"instructions,omitempty"`
+	AllowedClassifications  []string `yaml:"allowed-classifications,omitempty"`
+	MaxInputBytes           int      `yaml:"max-input-bytes,omitempty"`
+	MaxDiffLinesPerResource int      `yaml:"max-diff-lines-per-resource,omitempty"`
+	Timeout                 string   `yaml:"timeout,omitempty"`
 }
 
 type LabelList []string

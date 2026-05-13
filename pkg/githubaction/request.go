@@ -52,6 +52,10 @@ type Request struct {
 	HTMLReportName                 string
 	HTMLReportRetentionDays        int
 	HTMLReportMaxResourceDiffBytes int
+	AIAssessment                   string
+	AIProvider                     string
+	AIModel                        string
+	AIFailOnError                  string
 
 	// Policy
 	FailOnWarning bool
@@ -91,6 +95,10 @@ func ParseRequestFromEnv() (*Request, error) {
 		HTMLReportName:                 getInput("html-report-name", "flux-manifest-preview-report"),
 		HTMLReportRetentionDays:        parseInt(getInput("html-report-retention-days", "7")),
 		HTMLReportMaxResourceDiffBytes: parseInt(getInput("html-report-max-resource-diff-bytes", "2000000")),
+		AIAssessment:                   getInput("ai-assessment", ""),
+		AIProvider:                     getInput("ai-provider", ""),
+		AIModel:                        getInput("ai-model", ""),
+		AIFailOnError:                  getInput("ai-fail-on-error", ""),
 		FailOnWarning:                  parseBool(getInput("fail-on-warning", "false")),
 		FailOnError:                    parseBool(getInput("fail-on-error", "true")),
 	}

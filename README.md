@@ -73,6 +73,7 @@ The report includes:
 - **SOPS support** — decrypt encrypted resources locally when requested.
 - **Noise reduction** — normalize generated fields such as timestamps, random hashes, or certificate data.
 - **Policy checks** — classify changes, block risky PRs, and suggest/apply labels using built-in or custom Rego policies.
+- **AI assessment** — optionally generate a concise review summary and provenance-aware classifications with OpenAI, Anthropic, Z.AI, MiniMax, or OpenRouter.
 - **Agent-friendly output** — every major command supports structured JSON and stable semantic exit codes.
 
 ---
@@ -245,6 +246,38 @@ Built-in policies currently include:
 
 `fail-on` matches policy IDs. If any listed rule matches, `fmp diff` exits non-zero and the GitHub Action fails. `labels` maps policy IDs to one or more pull request labels.
 
+### AI assessment
+
+AI assessment is an optional generated review aid for `fmp diff` and the GitHub Action. It adds a concise generated summary and may add classifications with `provenance: ai`; policy classifications use `provenance: policy`.
+
+Enable it in config:
+
+```yaml
+ai:
+  enabled: true
+  provider: openai # openai, anthropic, zai, minimax, or openrouter; optional if exactly one token is set
+  model: gpt-4o-mini # optional provider-specific override
+  fail-on-error: false
+  allowed-classifications:
+    - network_exposure
+    - data_risk
+  max-input-bytes: 100000
+  max-diff-lines-per-resource: 80
+  timeout: 30s
+  instructions: |
+    Focus on production-impacting Kubernetes changes.
+```
+
+Or enable per invocation:
+
+```bash
+OPENAI_API_KEY=... fmp diff --ai-assessment --summary
+```
+
+Supported credential environment variables are `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `ZAI_API_KEY`, `MINIMAX_API_KEY`, and `OPENROUTER_API_KEY`. If no provider is configured, `fmp` auto-selects only when exactly one supported token is present; missing or ambiguous credentials warn and skip AI assessment by default.
+
+AI classifications participate in the same `policies.labels` and `policies.fail-on` mappings as policy classifications. Use `ai.allowed-classifications` when you want to restrict which generated classification IDs may enter the unified classification set.
+
 ---
 
 ## GitHub Action
@@ -263,6 +296,9 @@ Use the action to review Flux pull requests automatically.
     resolve-git: true
     comment: true
     html-report: true
+    ai-assessment: true
+  env:
+    OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 ```
 
 ### Rich HTML report artifact
@@ -326,6 +362,10 @@ This publishes reports to the `gh-pages` branch. When Pages is not enabled, the 
 | `comment-mode`        | When to comment: `changes`, `always`, or `failure` | `changes`       |
 | `html-report`         | Generate and upload the HTML report                | `false`         |
 | `html-report-pages`   | Deploy the HTML report to GitHub Pages             | `false`         |
+| `ai-assessment`       | Enable AI assessment; empty inherits config        |                 |
+| `ai-provider`         | AI provider override                               |                 |
+| `ai-model`            | AI model override                                  |                 |
+| `ai-fail-on-error`    | Fail if AI assessment cannot be generated          |                 |
 | `export-dir`          | Export rendered manifests directory                |                 |
 | `export-changed-only` | Only export changed manifests                      | `false`         |
 | `fail-on-warning`     | Fail the step on warnings                          | `false`         |
@@ -344,10 +384,12 @@ This publishes reports to the `gh-pages` branch. When Pages is not enabled, the 
 | `report-file`                                                  | Structured JSON report                                    |
 | `html-report-url`                                              | Direct URL to the interactive HTML report when available  |
 | `export-dir`                                                   | Directory where manifests were exported                   |
-| `classifications-json`                                         | Matched policy classifications                            |
+| `classifications-json`                                         | Matched classifications with provenance                    |
 | `violations-json`                                              | Matched policy violations                                 |
 | `labels-json`                                                  | Suggested or applied PR labels                            |
 | `policy-failed`                                                | Whether a configured `fail-on` policy matched             |
+| `ai-assessment-json`                                           | AI assessment object when generated                       |
+| `ai-summary`                                                   | AI-generated summary when generated                       |
 
 > [!WARNING]
 > `sops-decrypt` is intentionally unsupported in the GitHub Action to avoid leaking decrypted content into logs, summaries, comments, or artifacts.
