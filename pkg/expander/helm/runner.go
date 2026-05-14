@@ -207,7 +207,73 @@ func (r *Runner) renderChart(ctx context.Context, t *RenderTask) (resmap.ResMap,
 		return nil, fmt.Errorf("running post renderer: %w", err)
 	}
 	manifests = *renderedManifests
-	return parseManifests(manifests.Bytes(), r.logger)
+	resources, err := parseManifests(manifests.Bytes(), r.logger)
+	if err != nil {
+		return nil, err
+	}
+	applyNamespaceToRenderedResources(resources, t.namespace)
+	return resources, nil
+}
+
+func applyNamespaceToRenderedResources(resources resmap.ResMap, namespace string) {
+	if namespace == "" {
+		return
+	}
+	clusterScopedGVKs := clusterScopedGVKsFromCRDs(resources)
+	for _, res := range resources.Resources() {
+		if !isClusterScopedRenderedResource(res, clusterScopedGVKs) && res.GetNamespace() == "" {
+			_ = res.SetNamespace(namespace)
+		}
+	}
+}
+
+func isClusterScopedRenderedResource(res *resource.Resource, clusterScopedGVKs map[string]bool) bool {
+	gvk := res.GetGvk()
+	return gvk.IsClusterScoped() ||
+		isKnownClusterScopedRenderedGVK(gvk.Group, gvk.Kind) ||
+		clusterScopedGVKs[gvkScopeKey(gvk.Group, gvk.Kind)]
+}
+
+func isKnownClusterScopedRenderedGVK(group, kind string) bool {
+	switch gvkScopeKey(group, kind) {
+	case gvkScopeKey("snapshot.storage.k8s.io", "VolumeSnapshotClass"):
+		return true
+	default:
+		return false
+	}
+}
+
+func clusterScopedGVKsFromCRDs(resources resmap.ResMap) map[string]bool {
+	clusterScopedGVKs := make(map[string]bool)
+	for _, res := range resources.Resources() {
+		gvk := res.GetGvk()
+		if gvk.Group != "apiextensions.k8s.io" || gvk.Kind != "CustomResourceDefinition" {
+			continue
+		}
+
+		obj, err := res.Map()
+		if err != nil {
+			continue
+		}
+		spec, ok := obj["spec"].(map[string]any)
+		if !ok || spec["scope"] != "Cluster" {
+			continue
+		}
+		names, ok := spec["names"].(map[string]any)
+		if !ok {
+			continue
+		}
+		group, groupOK := spec["group"].(string)
+		kind, kindOK := names["kind"].(string)
+		if groupOK && kindOK {
+			clusterScopedGVKs[gvkScopeKey(group, kind)] = true
+		}
+	}
+	return clusterScopedGVKs
+}
+
+func gvkScopeKey(group, kind string) string {
+	return group + "/" + kind
 }
 
 func runPostRenderer(renderer PostRenderer, manifests *bytes.Buffer) (*bytes.Buffer, error) {
