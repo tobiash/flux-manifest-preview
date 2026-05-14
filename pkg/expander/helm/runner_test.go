@@ -22,6 +22,13 @@ metadata:
 data:
   value: ok
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: omitted-namespace
+data:
+  value: ok
+---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
@@ -49,6 +56,32 @@ driver: rook-ceph.rbd.csi.ceph.com
 deletionPolicy: Delete
 parameters:
   clusterID: {{ .Release.Namespace }}
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: clusterwidgets.example.com
+spec:
+  group: example.com
+  scope: Cluster
+  names:
+    plural: clusterwidgets
+    singular: clusterwidget
+    kind: ClusterWidget
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+---
+apiVersion: example.com/v1
+kind: ClusterWidget
+metadata:
+  name: test-widget
+spec:
+  value: ok
 `)
 
 	runner := NewRunner(helmcli.New(), logr.Discard())
@@ -68,6 +101,13 @@ parameters:
 	}
 	if got := configMap.GetNamespace(); got != "demo-ns" {
 		t.Fatalf("ConfigMap namespace = %q, want demo-ns", got)
+	}
+	omittedNamespaceConfigMap, err := resources.GetById(resid.NewResIdWithNamespace(resid.NewGvk("", "v1", "ConfigMap"), "omitted-namespace", "demo-ns"))
+	if err != nil {
+		t.Fatalf("GetById(omitted namespace configmap) error = %v", err)
+	}
+	if got := omittedNamespaceConfigMap.GetNamespace(); got != "demo-ns" {
+		t.Fatalf("omitted namespace ConfigMap namespace = %q, want demo-ns", got)
 	}
 
 	webhook, err := resources.GetById(resid.NewResId(resid.NewGvk("admissionregistration.k8s.io", "v1", "ValidatingWebhookConfiguration"), "test-webhook"))
@@ -99,6 +139,18 @@ parameters:
 	}
 	if clusterID := snapMap["parameters"].(map[string]any)["clusterID"]; clusterID != "demo-ns" {
 		t.Fatalf("snapshot class clusterID = %v, want demo-ns", clusterID)
+	}
+
+	widget, err := resources.GetById(resid.NewResId(resid.NewGvk("example.com", "v1", "ClusterWidget"), "test-widget"))
+	if err != nil {
+		t.Fatalf("GetById(cluster widget) error = %v", err)
+	}
+	widgetMap, err := widget.Map()
+	if err != nil {
+		t.Fatalf("widget.Map() error = %v", err)
+	}
+	if _, found := widgetMap["metadata"].(map[string]any)["namespace"]; found {
+		t.Fatalf("expected ClusterWidget to remain cluster-scoped, got metadata.namespace=%v", widgetMap["metadata"].(map[string]any)["namespace"])
 	}
 }
 
