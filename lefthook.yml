@@ -18,6 +18,9 @@ pre-commit:
       glob: "*.go"
       run: golangci-lint run --new-from-rev HEAD --fix ./...
       stage_fixed: true
+    secretlint:
+      glob: "*"
+      run: npx --no-install secretlint --secretlintrc .secretlintrc.json {staged_files}
     fmp-policy:
       # Run fmp policy checks when .fmp.yaml has policies configured.
       # Compares HEAD against the staged index so only staged changes are evaluated.
