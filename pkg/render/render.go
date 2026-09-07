@@ -137,6 +137,10 @@ func (r *Render) addRawYAMLFiles(fSys filesys.FileSystem, dir, producer string) 
 	}
 
 	for _, name := range entries {
+		// These are fmp configuration files, not Kubernetes manifests.
+		if name == ".fmp.yaml" || name == ".fmp.yml" || (filepath.Base(dir) == ".github" && name == "fmp.yaml") {
+			continue
+		}
 		ext := filepath.Ext(name)
 		if ext != ".yaml" && ext != ".yml" {
 			continue
@@ -150,8 +154,7 @@ func (r *Render) addRawYAMLFiles(fSys filesys.FileSystem, dir, producer string) 
 
 		resources, err := resmap.NewFactory(resource.NewFactory(nil)).NewResMapFromBytes(data)
 		if err != nil {
-			r.log.V(1).Info("skipping file, failed to parse", "path", fullPath, "error", err)
-			continue
+			return fmt.Errorf("parsing %s: %w", fullPath, err)
 		}
 
 		if err := r.absorbResMap(fullPath, producer, resources); err != nil {
@@ -167,6 +170,11 @@ func (r *Render) absorbResMap(source, producer string, src resmap.ResMap) error 
 		id := res.CurId()
 		idKey := id.String()
 		newProvenance := provenanceForResource(res, TextProvenance(producer))
+		if rendered, ok := src.(*Render); ok {
+			if p := rendered.ProvenanceForID(id); p.String() != "" {
+				newProvenance = p
+			}
+		}
 		if existing, err := r.GetById(id); err == nil {
 			existingProvenance := r.provenance[idKey]
 			if existingProvenance.String() == "" {
@@ -191,6 +199,9 @@ func (r *Render) Warnings() []error {
 
 // AbsorbAll merges resources into the render, replacing duplicates and recording warnings.
 func (r *Render) AbsorbAll(src resmap.ResMap) error {
+	if rendered, ok := src.(*Render); ok {
+		r.warnings = append(r.warnings, rendered.Warnings()...)
+	}
 	return r.absorbResMap("expanded resources", "expanded resources", src)
 }
 
@@ -405,27 +416,54 @@ func (r *Render) FilterCRDs() {
 // ApplyNamespaceToNew sets the namespace on all namespace-scoped resources
 // added after the given count. This is used to apply Flux Kustomization
 // spec.targetNamespace to newly rendered resources.
-func (r *Render) ApplyNamespaceToNew(count int, namespace string) {
-	for _, res := range r.Resources()[count:] {
-		oldID := res.CurId().String()
-		if !res.GetGvk().IsClusterScoped() && res.GetNamespace() == "" {
-			_ = res.SetNamespace(namespace)
-			if producer, ok := r.provenance[oldID]; ok {
-				delete(r.provenance, oldID)
-				r.provenance[res.CurId().String()] = producer
-			}
+func (r *Render) ApplyNamespaceToNew(count int, namespace string) error {
+	clusterScoped := make(map[string]bool)
+	for _, res := range r.Resources() {
+		if res.GetKind() != "CustomResourceDefinition" || res.GetGvk().Group != "apiextensions.k8s.io" {
+			continue
+		}
+		scope, _ := res.GetFieldValue("spec.scope")
+		group, _ := res.GetFieldValue("spec.group")
+		kind, _ := res.GetFieldValue("spec.names.kind")
+		if scope == "Cluster" {
+			clusterScoped[fmt.Sprint(group)+"/"+fmt.Sprint(kind)] = true
 		}
 	}
+	resources := append([]*resource.Resource(nil), r.Resources()[count:]...)
+	producers := make([]Provenance, len(resources))
+	for i, res := range resources {
+		producers[i] = r.ProvenanceForID(res.CurId())
+		delete(r.provenance, res.CurId().String())
+		if err := r.Remove(res.CurId()); err != nil {
+			return err
+		}
+	}
+	for i, res := range resources {
+		gvk := res.GetGvk()
+		if !gvk.IsClusterScoped() && !clusterScoped[gvk.Group+"/"+gvk.Kind] && (gvk.Group != "snapshot.storage.k8s.io" || gvk.Kind != "VolumeSnapshotClass") {
+			if err := res.SetNamespace(namespace); err != nil {
+				return err
+			}
+		}
+		one := resmap.New()
+		if err := one.Append(res); err != nil {
+			return err
+		}
+		if err := r.absorbResMap("targetNamespace", producers[i].String(), one); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // AsJSON returns the rendered resources as a Kubernetes List envelope.
 func (r *Render) AsJSON() ([]byte, error) {
 	resources := r.Resources()
 	items := make([]map[string]any, 0, len(resources))
-	for _, res := range resources {
+	for i, res := range resources {
 		m, err := res.Map()
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("converting resource %d to JSON map: %w", i+1, err)
 		}
 		items = append(items, m)
 	}

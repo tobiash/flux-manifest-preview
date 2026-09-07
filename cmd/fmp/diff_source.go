@@ -115,6 +115,9 @@ func runDiff(cmd *cobra.Command, log logr.Logger, args []string, summaryOut io.W
 	}
 	defer cleanup()
 
+	for _, warning := range dr.warnings {
+		fmt.Fprintf(os.Stderr, "WARNING: %s\n", warning)
+	}
 	if err := writeDiffSummary(summaryOut, dr.result, dr.policyResult); err != nil {
 		return fmt.Errorf("writing diff summary: %w", err)
 	}
@@ -126,6 +129,9 @@ func runDiff(cmd *cobra.Command, log logr.Logger, args []string, summaryOut io.W
 	}
 	if dr.policyResult != nil && dr.policyResult.PolicyFailed {
 		return fmt.Errorf("%w: %s", ErrPolicyViolation, strings.Join(dr.policyResult.PolicyFailures, ", "))
+	}
+	if diffExitCode && dr.result.TotalChanged() > 0 {
+		return fmt.Errorf("manifest differences found")
 	}
 	return nil
 }
@@ -139,6 +145,9 @@ func runDiffJSON(cmd *cobra.Command, log logr.Logger, args []string, out io.Writ
 
 	jsonResult := dr.result.ToJSON()
 	output := map[string]any{
+		"complete":      true,
+		"warnings":      dr.warnings,
+		"changes":       jsonResult.Changes,
 		"added":         jsonResult.Added,
 		"deleted":       jsonResult.Deleted,
 		"modified":      jsonResult.Modified,
@@ -154,6 +163,9 @@ func runDiffJSON(cmd *cobra.Command, log logr.Logger, args []string, out io.Writ
 
 	if dr.policyResult != nil && dr.policyResult.PolicyFailed {
 		return fmt.Errorf("%w: %s", ErrPolicyViolation, strings.Join(dr.policyResult.PolicyFailures, ", "))
+	}
+	if diffExitCode && dr.result.TotalChanged() > 0 {
+		return fmt.Errorf("manifest differences found")
 	}
 	return nil
 }
@@ -193,7 +205,15 @@ func runDiffHTML(cmd *cobra.Command, log logr.Logger, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "HTML report written to %s\n", htmlFile)
 	if diffHTMLOpen {
-		return openBrowser(htmlFile)
+		if err := openBrowser(htmlFile); err != nil {
+			return err
+		}
+	}
+	if dr.policyResult != nil && dr.policyResult.PolicyFailed {
+		return fmt.Errorf("%w: %s", ErrPolicyViolation, strings.Join(dr.policyResult.PolicyFailures, ", "))
+	}
+	if diffExitCode && dr.result.TotalChanged() > 0 {
+		return fmt.Errorf("manifest differences found")
 	}
 	return nil
 }

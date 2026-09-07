@@ -2,6 +2,8 @@ package gitrepo
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -47,7 +49,7 @@ type sharedState struct {
 
 type cloneCache struct {
 	mu    sync.Mutex
-	paths map[string]string // "namespace/name" -> local path
+	paths map[string]string // acquisition digest (URL and full CloneConfig) -> local path
 }
 
 const sourceRepoURLsFile = ".fmp-source-repo-urls"
@@ -126,6 +128,8 @@ func (e *Expander) Expand(ctx context.Context, r *render.Render) (*expander.Expa
 	}
 
 	// Collect GitRepository resources.
+	result := &expander.ExpandResult{}
+	e.localPaths = make(map[string]string)
 	repos := make(map[string]gitRepoInfo) // "namespace/name" -> info
 	for _, res := range r.Resources() {
 		gvk := res.GetGvk()
@@ -134,37 +138,33 @@ func (e *Expander) Expand(ctx context.Context, r *render.Render) (*expander.Expa
 		}
 		m, err := res.Map()
 		if err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("GitRepository %s: %w", res.CurId(), err))
 			continue
 		}
 		spec, ok := m["spec"].(map[string]any)
 		if !ok {
+			result.Errors = append(result.Errors, fmt.Errorf("GitRepository %s has invalid spec", res.CurId()))
 			continue
 		}
-		url, _, _ := unstructured.NestedString(spec, "url")
-		if url == "" {
+		url, _, err := unstructured.NestedString(spec, "url")
+		if err != nil || url == "" {
+			result.Errors = append(result.Errors, fmt.Errorf("GitRepository %s has missing or invalid spec.url", res.CurId()))
 			continue
 		}
 		key := res.GetNamespace() + "/" + res.GetName()
 		cloneCfg, err := cloneConfigForSpec(spec)
 		if err != nil {
-			e.log.Error(err, "failed to parse GitRepository ref, skipping", "key", key, "url", url)
+			result.Errors = append(result.Errors, fmt.Errorf("GitRepository %s: parsing spec: %w", key, err))
 			continue
 		}
 		repos[key] = gitRepoInfo{url: url, clone: cloneCfg}
 	}
 
 	if len(repos) == 0 {
-		return &expander.ExpandResult{}, nil
+		return result, nil
 	}
 
 	for key, info := range repos {
-		if _, exists := e.localPaths[key]; exists {
-			continue
-		}
-		if _, exists := e.sharedClonePath(key); exists {
-			continue
-		}
-
 		if e.matchesCurrentSource(info.url) {
 			e.log.V(1).Info("using current repo for GitRepository", "key", key, "path", e.sourceRoot)
 			e.localPaths[key] = e.sourceRoot
@@ -179,13 +179,23 @@ func (e *Expander) Expand(ctx context.Context, r *render.Render) (*expander.Expa
 			continue
 		}
 
-		if err := e.ensureSharedClone(ctx, key, info.url, info.clone); err != nil {
-			e.log.Error(err, "failed to clone GitRepository, skipping", "key", key, "url", info.url)
+		acquisition, err := json.Marshal(struct {
+			URL    string
+			Config gitrepository.CloneConfig
+		}{info.url, info.clone})
+		if err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("GitRepository %s: acquisition key: %w", key, err))
 			continue
 		}
+		acquisitionKey := fmt.Sprintf("%x", sha256.Sum256(acquisition))
+		if err := e.ensureSharedClone(ctx, acquisitionKey, info.url, info.clone); err != nil {
+			result.Errors = append(result.Errors, fmt.Errorf("GitRepository %s: %w", key, err))
+			continue
+		}
+		e.localPaths[key], _ = e.sharedClonePath(acquisitionKey)
 	}
 
-	return &expander.ExpandResult{}, nil
+	return result, nil
 }
 
 // ResolvePath returns the local filesystem path for a GitRepository source.
@@ -198,7 +208,7 @@ func (e *Expander) ResolvePath(namespace, name string) (string, bool) {
 	if path, ok := e.localPaths[key]; ok {
 		return path, true
 	}
-	return e.sharedClonePath(key)
+	return "", false
 }
 
 func (e *Expander) matchesCurrentSource(rawURL string) bool {
@@ -243,6 +253,7 @@ func (e *Expander) ensureSharedClone(ctx context.Context, key, rawURL string, cl
 
 		e.log.V(1).Info("cloning GitRepository", "key", key, "url", rawURL, "ref", describeCloneConfig(cloneCfg))
 		if err := gitCloneFunc(ctx, rawURL, clonePath, cloneCfg); err != nil {
+			_ = os.RemoveAll(clonePath)
 			return nil, err
 		}
 
@@ -254,8 +265,16 @@ func (e *Expander) ensureSharedClone(ctx context.Context, key, rawURL string, cl
 
 func cloneConfigForSpec(spec map[string]any) (gitrepository.CloneConfig, error) {
 	ref, ok := spec["ref"].(map[string]any)
-	if !ok {
-		ref = nil
+	if spec["ref"] != nil && !ok {
+		return gitrepository.CloneConfig{}, fmt.Errorf("spec.ref must be an object")
+	}
+	for _, field := range []string{"branch", "tag", "semver", "name", "commit"} {
+		if _, _, err := unstructured.NestedString(ref, field); err != nil {
+			return gitrepository.CloneConfig{}, err
+		}
+	}
+	if _, _, err := unstructured.NestedBool(spec, "recurseSubmodules"); err != nil {
+		return gitrepository.CloneConfig{}, err
 	}
 	cloneCfg := gitrepository.CloneConfig{
 		CheckoutStrategy:  gitrepository.CheckoutStrategy{},

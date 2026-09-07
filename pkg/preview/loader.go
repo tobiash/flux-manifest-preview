@@ -3,6 +3,7 @@ package preview
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/go-logr/logr"
 	"github.com/tobiash/flux-manifest-preview/pkg/render"
@@ -47,6 +48,9 @@ func (p *Preview) loadRepo(ctx context.Context, path string) (map[string]*loadRe
 }
 
 func (p *Preview) loadRepoPaths(ctx context.Context, path string, paths []string, cluster string) (*loadRepoResult, error) {
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("no render roots configured: specify --path or configure paths in .fmp.yaml")
+	}
 	log := p.log.WithValues("renderPath", path)
 	if cluster != "" {
 		log = log.WithValues("cluster", cluster)
@@ -62,7 +66,18 @@ func (p *Preview) loadRepoPaths(ctx context.Context, path string, paths []string
 		log:     log,
 	}
 
-	return fluxRenderGraph{loader: loader}.Load(ctx)
+	result, err := (fluxRenderGraph{loader: loader}).Load(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// The shipped renderer replaces duplicate IDs and exposes only a warning.
+	// Such replacement loses input, unlike intentionally skipped dependencies.
+	for _, warning := range result.warnings {
+		if strings.HasPrefix(warning.Error(), "duplicate resource ") {
+			result.errors = append(result.errors, warning)
+		}
+	}
+	return result, nil
 }
 
 func (l repoLoader) clusterErrorf(format string, args ...any) error {

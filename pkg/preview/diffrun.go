@@ -26,6 +26,7 @@ type DiffRunOptions struct {
 
 // DiffRunResult is the domain result used by CLI and GitHub Action adapters.
 type DiffRunResult struct {
+	Complete     bool
 	Result       *diff.DiffResult
 	Summary      diff.ResultSummary
 	DiffText     string
@@ -35,6 +36,8 @@ type DiffRunResult struct {
 }
 
 // RunDiff renders both sides, computes the rendered manifest diff, and applies policy checks.
+// Incomplete renders return an error and a result with Complete=false, diagnostics,
+// no authoritative changes, and no policy or AI assessment.
 func (p *Preview) RunDiff(ctx context.Context, opts DiffRunOptions) (*DiffRunResult, error) {
 	var diffText bytes.Buffer
 	result, err := p.DiffResult(ctx, opts.LeftPath, opts.RightPath, &diffText)
@@ -42,6 +45,9 @@ func (p *Preview) RunDiff(ctx context.Context, opts DiffRunOptions) (*DiffRunRes
 		var expansionErr *ExpansionError
 		if !errors.As(err, &expansionErr) || result == nil {
 			return nil, err
+		}
+		if len(expansionErr.Errors) > 0 {
+			return &DiffRunResult{Result: &diff.DiffResult{}, Warnings: expansionWarnings(err)}, err
 		}
 	}
 	if opts.DiffWriter != nil {
@@ -76,6 +82,7 @@ func (p *Preview) RunDiff(ctx context.Context, opts DiffRunOptions) (*DiffRunRes
 	}
 
 	return &DiffRunResult{
+		Complete:     true,
 		Result:       result,
 		Summary:      result.Summary(),
 		DiffText:     diffText.String(),
@@ -110,7 +117,8 @@ func expansionWarnings(err error) []string {
 	}
 	warnings := make([]string, 0, len(expansionErr.Errors)+len(expansionErr.Warnings))
 	seen := make(map[string]struct{})
-	for _, issue := range append(expansionErr.Errors, expansionErr.Warnings...) {
+	issues := append(append([]error(nil), expansionErr.Errors...), expansionErr.Warnings...)
+	for _, issue := range issues {
 		if issue == nil {
 			continue
 		}

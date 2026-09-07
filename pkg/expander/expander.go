@@ -36,6 +36,10 @@ type ExpandResult struct {
 	// (e.g. a HelmRelease whose chart could not be resolved).
 	// These do not stop expansion but should be surfaced to the user.
 	Errors []error
+	// DeferredErrors contains unresolved dependencies that may be discovered in
+	// later iterations. Expanders must recompute these on every call; discovery
+	// promotes only those remaining at the fixed point to Errors.
+	DeferredErrors []error
 }
 
 // Expander is the interface that each resource expander must implement.
@@ -77,6 +81,7 @@ func (r *Registry) Expand(ctx context.Context, render *render.Render) (*ExpandRe
 		}
 		result.DiscoveredPaths = append(result.DiscoveredPaths, expanded.DiscoveredPaths...)
 		result.Errors = append(result.Errors, expanded.Errors...)
+		result.DeferredErrors = append(result.DeferredErrors, expanded.DeferredErrors...)
 	}
 	return result, nil
 }
