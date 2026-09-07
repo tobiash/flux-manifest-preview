@@ -161,6 +161,10 @@ func runGitHubAction(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// A failed render is not an advisory finding: no complete comparison exists.
+	if err != nil {
+		return err
+	}
 	if req.ShouldFail(report) || report.PolicyFailed {
 		return fmt.Errorf("fmp action failed: status=%s errors=%d warnings=%d", report.Status, len(report.Errors), len(report.Warnings))
 	}
@@ -217,6 +221,9 @@ func executeAction(log logr.Logger, req *githubaction.Request) (*githubaction.Ac
 			Status:    githubaction.StatusError,
 			Errors:    []string{err.Error()},
 			DiffBytes: diffText.Len(),
+		}
+		if run != nil {
+			report.Warnings = run.Warnings
 		}
 		if diffText.Len() > 0 {
 			preview, truncated := githubaction.TruncateDiff(diffText.String(), req.MaxInlineDiffBytes, req.DiffPreviewLines)

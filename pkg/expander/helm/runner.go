@@ -40,6 +40,7 @@ type RenderTask struct {
 	localChartPath  string
 	releaseName     string
 	namespace       string
+	origin          fmprender.Provenance
 	createNamespace bool
 	skipCRDs        bool
 	replace         bool
@@ -86,7 +87,7 @@ func (r *Runner) RenderCharts(ctx context.Context, releases []RenderTask) (resma
 	for _, chartResult := range results {
 		if chartResult.err != nil {
 			r.logger.V(1).Info("skipping chart render", "chart", chartResult.task.chart, "namespace", chartResult.task.namespace, "error", chartResult.err)
-			errs = append(errs, fmt.Errorf("HelmRelease %s/%s: %w", chartResult.task.namespace, chartResult.task.chart, chartResult.err))
+			errs = append(errs, fmt.Errorf("%s: %w", helmReleaseProducer(chartResult.task), chartResult.err))
 			continue
 		}
 		for _, res := range chartResult.resources.Resources() {
@@ -94,26 +95,33 @@ func (r *Runner) RenderCharts(ctx context.Context, releases []RenderTask) (resma
 			if annotations == nil {
 				annotations = make(map[string]string)
 			}
-			annotations[fmprender.ProducerAnnotation] = helmReleaseProducer(chartResult.task)
-			_ = res.SetAnnotations(annotations)
-
 			labels := res.GetLabels()
 			if labels == nil {
 				labels = make(map[string]string)
 			}
-			labels["helm.toolkit.fluxcd.io/name"] = chartResult.task.releaseName
-			labels["helm.toolkit.fluxcd.io/namespace"] = chartResult.task.namespace
+			if chartResult.task.origin.Name != "" {
+				labels["helm.toolkit.fluxcd.io/name"] = chartResult.task.origin.Name
+				labels["helm.toolkit.fluxcd.io/namespace"] = chartResult.task.origin.Namespace
+			} else if labels["helm.toolkit.fluxcd.io/name"] == "" {
+				labels["helm.toolkit.fluxcd.io/name"] = chartResult.task.releaseName
+				labels["helm.toolkit.fluxcd.io/namespace"] = chartResult.task.namespace
+			}
 			_ = res.SetLabels(labels)
+			annotations[fmprender.ProducerAnnotation] = fmprender.HelmReleaseProvenance(labels["helm.toolkit.fluxcd.io/namespace"], labels["helm.toolkit.fluxcd.io/name"]).String()
+			_ = res.SetAnnotations(annotations)
 		}
 
 		if err := absorbResMap(res, chartResult.resources, r.logger); err != nil {
-			return nil, errs, fmt.Errorf("absorbing resources for %s/%s: %w", chartResult.task.releaseName, chartResult.task.namespace, err)
+			errs = append(errs, fmt.Errorf("absorbing resources for %s: %w", helmReleaseProducer(chartResult.task), err))
 		}
 	}
 	return res, errs, nil
 }
 
 func helmReleaseProducer(task RenderTask) string {
+	if task.origin.Name != "" {
+		return task.origin.String()
+	}
 	if task.namespace != "" {
 		return fmt.Sprintf("HelmRelease %s/%s", task.namespace, task.releaseName)
 	}
@@ -196,7 +204,7 @@ func (r *Runner) renderChart(ctx context.Context, t *RenderTask) (resmap.ResMap,
 			for _, h := range acc.Hooks() {
 				ha, err := ri.NewHookAccessor(h)
 				if err != nil {
-					continue
+					return nil, fmt.Errorf("reading hook: %w", err)
 				}
 				fmt.Fprintf(&manifests, "---\n# Source: %s\n%s\n", ha.Path(), ha.Manifest())
 			}
@@ -284,15 +292,11 @@ func runPostRenderer(renderer PostRenderer, manifests *bytes.Buffer) (*bytes.Buf
 }
 
 // parseManifests splits a multi-document YAML byte slice into individual
-// resources, parsing each one independently. Resources that fail to parse
-// (e.g. missing metadata.name) are skipped with a log warning.
+// resources. Invalid or duplicate resources fail the chart rather than disappearing.
 func parseManifests(data []byte, log logr.Logger) (resmap.ResMap, error) {
 	result := resmap.New()
 	factory := resmap.NewFactory(resource.NewFactory(&hasher.Hasher{}))
 
-	// kustomize's NewResMapFromBytes rejects any document missing metadata.name.
-	// Split on document boundaries and parse individually so one bad resource
-	// doesn't sink the entire chart output.
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	for {
 		var buf bytes.Buffer
@@ -319,8 +323,7 @@ func parseManifests(data []byte, log logr.Logger) (resmap.ResMap, error) {
 
 		rm, err := factory.NewResMapFromBytes(buf.Bytes())
 		if err != nil {
-			log.V(1).Info("skipping malformed resource", "error", err)
-			continue
+			return nil, fmt.Errorf("parsing manifest: %w", err)
 		}
 		if err := absorbResMap(result, rm, log); err != nil {
 			return nil, fmt.Errorf("absorbing resources: %w", err)
@@ -329,14 +332,12 @@ func parseManifests(data []byte, log logr.Logger) (resmap.ResMap, error) {
 	return result, nil
 }
 
-// absorbResMap merges src into dst, replacing duplicates instead of failing.
+// absorbResMap merges src into dst, rejecting duplicate identities.
 func absorbResMap(dst, src resmap.ResMap, log logr.Logger) error {
 	for _, r := range src.Resources() {
 		id := r.CurId()
-		if existing, err := dst.GetById(id); err == nil {
-			// Duplicate: remove old and add new.
-			_ = dst.Remove(existing.CurId())
-			log.V(1).Info("replacing duplicate resource", "id", id)
+		if _, err := dst.GetById(id); err == nil {
+			return fmt.Errorf("duplicate resource %s", id)
 		}
 		if err := dst.Append(r); err != nil {
 			return err

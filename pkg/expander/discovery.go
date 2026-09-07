@@ -2,7 +2,9 @@ package expander
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"path/filepath"
 
 	"github.com/tobiash/flux-manifest-preview/pkg/render"
 )
@@ -35,6 +37,7 @@ func (r DiscoveryRunner) Run(ctx context.Context, resources *render.Render, init
 	queue := append([]DiscoveredPath(nil), initial...)
 	visited := make(map[string]struct{})
 	result := &ExpandResult{}
+	var deferredErrors []error
 
 	for iteration := 0; len(queue) > 0; iteration++ {
 		if iteration > maxIterations {
@@ -63,6 +66,7 @@ func (r DiscoveryRunner) Run(ctx context.Context, resources *render.Render, init
 			return nil, fmt.Errorf("failed to expand: %w", err)
 		}
 		result.Errors = append(result.Errors, expanded.Errors...)
+		deferredErrors = expanded.DeferredErrors
 		if expanded.Resources != nil {
 			if err := resources.AbsorbAll(expanded.Resources); err != nil {
 				return nil, fmt.Errorf("failed to absorb expanded resources: %w", err)
@@ -75,6 +79,7 @@ func (r DiscoveryRunner) Run(ctx context.Context, resources *render.Render, init
 		}
 	}
 
+	result.Errors = append(result.Errors, deferredErrors...)
 	return result, nil
 }
 
@@ -82,5 +87,11 @@ func (r DiscoveryRunner) pathKey(path DiscoveredPath) string {
 	if r.PathKey != nil {
 		return r.PathKey(path)
 	}
-	return path.BaseDir + "\x00" + path.Path
+	path.Path = filepath.Join(path.BaseDir, path.Path)
+	path.BaseDir = ""
+	if len(path.Substitutions) == 0 {
+		path.Substitutions = nil
+	}
+	key, _ := json.Marshal(path) // DiscoveredPath contains only JSON-safe strings and maps.
+	return string(key)
 }

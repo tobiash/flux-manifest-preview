@@ -66,6 +66,9 @@ func (p *Preview) ListKustomizations(ctx context.Context, path string) ([]Kustom
 	}
 	var all []KustomizationInfo
 	for _, r := range results {
+		if len(r.errors) > 0 {
+			return nil, &ExpansionError{Errors: r.errors, Warnings: r.warnings}
+		}
 		all = append(all, extractKustomizations(r.render)...)
 	}
 	return all, nil
@@ -79,6 +82,9 @@ func (p *Preview) ListHelmReleases(ctx context.Context, path string) ([]HelmRele
 	}
 	var all []HelmReleaseInfo
 	for _, r := range results {
+		if len(r.errors) > 0 {
+			return nil, &ExpansionError{Errors: r.errors, Warnings: r.warnings}
+		}
 		all = append(all, extractHelmReleases(r.render)...)
 	}
 	return all, nil

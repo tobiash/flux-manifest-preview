@@ -152,7 +152,7 @@ metadata:
 	}
 }
 
-func TestPostRendererCommonMetadata_SkipsNamelessDocs(t *testing.T) {
+func TestPostRendererCommonMetadata_RejectsNamelessDocs(t *testing.T) {
 	input := `apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -166,24 +166,12 @@ spec:
 	cm := &v2.CommonMetadata{Labels: map[string]string{"app": "test"}}
 	renderer := newPostRendererCommonMetadata(cm)
 
-	out, err := renderer.Run(bytes.NewBufferString(input))
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-
-	result := out.String()
-	if !contains(result, "app: test") {
-		t.Fatalf("expected common metadata label on named object, got:\n%s", result)
-	}
-	if contains(result, "CephCluster") {
-		t.Fatalf("expected nameless document to be skipped by post-render transform, got:\n%s", result)
-	}
-	if !contains(result, "name: test-cm") {
-		t.Fatalf("expected named document to remain, got:\n%s", result)
+	if _, err := renderer.Run(bytes.NewBufferString(input)); err == nil {
+		t.Fatal("Run(nameless document) succeeded, want error")
 	}
 }
 
-func TestPostRendererOriginLabels_SkipsNamelessDocs(t *testing.T) {
+func TestPostRendererOriginLabels_RejectsNamelessDocs(t *testing.T) {
 	input := `apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -196,17 +184,8 @@ spec:
 `
 	renderer := newPostRendererOriginLabels("rel", "ns")
 
-	out, err := renderer.Run(bytes.NewBufferString(input))
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-
-	result := out.String()
-	if !contains(result, "helm.toolkit.fluxcd.io/name: rel") {
-		t.Fatalf("expected origin label on named object, got:\n%s", result)
-	}
-	if contains(result, "CephCluster") {
-		t.Fatalf("expected nameless document to be skipped by post-render transform, got:\n%s", result)
+	if _, err := renderer.Run(bytes.NewBufferString(input)); err == nil {
+		t.Fatal("Run(nameless document) succeeded, want error")
 	}
 }
 
