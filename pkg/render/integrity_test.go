@@ -1,11 +1,38 @@
 package render
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/go-logr/logr"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 )
+
+func TestAbsorbProducerAnnotationsAndHelmOriginLabels(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		producer string
+		labels   string
+		want     Provenance
+	}{
+		{name: "generated origin", producer: "HelmRelease flux-system/origin", labels: "    helm.toolkit.fluxcd.io/name: origin\n    helm.toolkit.fluxcd.io/namespace: flux-system\n", want: HelmReleaseProvenance("flux-system", "origin")},
+		{name: "explicit producer", producer: "explicit source", labels: "    helm.toolkit.fluxcd.io/name: origin\n    helm.toolkit.fluxcd.io/namespace: flux-system\n", want: TextProvenance("explicit source")},
+		{name: "different Helm producer", producer: "HelmRelease other/source", labels: "    helm.toolkit.fluxcd.io/name: origin\n    helm.toolkit.fluxcd.io/namespace: flux-system\n", want: TextProvenance("HelmRelease other/source")},
+		{name: "text without labels", producer: "HelmRelease flux-system/origin", want: TextProvenance("HelmRelease flux-system/origin")},
+		{name: "incomplete source labels", producer: "HelmRelease apps/origin", labels: "    helm.toolkit.fluxcd.io/name: origin\n", want: TextProvenance("HelmRelease apps/origin")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newRenderFromYAML(t, fmt.Sprintf("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: destination\n  namespace: apps\n  annotations:\n    %s: %q\n  labels:\n%s", ProducerAnnotation, tt.producer, tt.labels))
+			merged := NewDefaultRender(logr.Discard())
+			if err := merged.AbsorbAll(r); err != nil {
+				t.Fatal(err)
+			}
+			if got := merged.ProvenanceForID(merged.Resources()[0].CurId()); got != tt.want {
+				t.Errorf("AbsorbAll(%s) provenance = %#v, want %#v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
 
 func TestMalformedRawYAMLReturnsError(t *testing.T) {
 	fs := filesys.MakeFsInMemory()

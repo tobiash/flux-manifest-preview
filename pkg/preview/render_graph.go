@@ -17,26 +17,35 @@ type fluxRenderGraph struct {
 
 func (g fluxRenderGraph) Load(ctx context.Context) (*loadRepoResult, error) {
 	initial := g.initialPaths()
-	bootstrap := make(map[string]string, len(initial))
+	roots := make(map[string]bool, len(initial))
 	for _, path := range initial {
-		producer := path.Producer
-		path.Producer = ""
-		bootstrap[g.pathKey(path)] = producer
+		roots[g.pathKey(path)] = true
 	}
+	bootstrap := make(map[string]string)
+	visited := make(map[string]bool)
 	discovery := expander.DiscoveryRunner{
 		Expanders: g.loader.preview.expandersForSource(g.loader.root),
 		PathKey:   g.pathKey,
 		RenderPath: func(path expander.DiscoveredPath) error {
-			buildContext := path
-			buildContext.Producer = ""
-			key := g.pathKey(buildContext)
-			if producer, ok := bootstrap[key]; ok && producer != path.Producer {
-				// The first Flux owner can reuse an identical bootstrap build.
-				// Further owners must render so conflicting producers remain visible.
-				delete(bootstrap, key)
-				return nil
-			}
-			return g.renderPath(path)
+			return g.renderPathWithBuildFilter(path, func(build expander.DiscoveredPath) bool {
+				identity := g.pathKey(build)
+				if visited[identity] {
+					return false
+				}
+				visited[identity] = true
+				buildContext := build
+				buildContext.Producer = ""
+				key := g.pathKey(buildContext)
+				if producer, ok := bootstrap[key]; ok && producer != build.Producer {
+					// Only the first equivalent Flux owner reuses a bootstrap build.
+					delete(bootstrap, key)
+					return false
+				}
+				if roots[g.pathKey(path)] {
+					bootstrap[key] = build.Producer
+				}
+				return true
+			})
 		},
 	}
 	expanded, err := discovery.Run(ctx, g.loader.render, initial)
@@ -68,6 +77,10 @@ func (g fluxRenderGraph) initialPaths() []expander.DiscoveredPath {
 }
 
 func (g fluxRenderGraph) renderPath(path expander.DiscoveredPath) error {
+	return g.renderPathWithBuildFilter(path, nil)
+}
+
+func (g fluxRenderGraph) renderPathWithBuildFilter(path expander.DiscoveredPath, shouldBuild func(expander.DiscoveredPath) bool) error {
 	baseDir := path.BaseDir
 	if baseDir == "" {
 		baseDir = g.loader.root
@@ -87,12 +100,21 @@ func (g fluxRenderGraph) renderPath(path expander.DiscoveredPath) error {
 	if producer == "" {
 		producer = fmt.Sprintf("path %s", path.Path)
 	}
+	visit := func(dir string) error {
+		build := path
+		build.BaseDir = dir
+		build.Path = "."
+		if shouldBuild != nil && !shouldBuild(build) {
+			return nil
+		}
+		return built.AddPathWithProducer(g.loader.fs, dir, producer)
+	}
 	if g.loader.preview.recursive {
-		if err := built.AddPathsWithProducer(g.loader.fs, full, producer); err != nil {
+		if err := render.WalkPaths(g.loader.fs, full, visit); err != nil {
 			return fmt.Errorf("failed to add path %s: %w", full, err)
 		}
 	} else {
-		if err := built.AddPathWithProducer(g.loader.fs, full, producer); err != nil {
+		if err := visit(full); err != nil {
 			return fmt.Errorf("failed to add path %s: %w", full, err)
 		}
 	}

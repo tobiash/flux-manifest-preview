@@ -60,14 +60,14 @@ func TestRenderGraphBuildContexts(t *testing.T) {
 }
 
 func TestRenderGraphBootstrapAndAliasesThroughPreview(t *testing.T) {
-	for _, self := range []bool{false, true} {
-		t.Run(fmt.Sprintf("self=%t", self), func(t *testing.T) {
+	for _, tt := range []struct{ self, recursive bool }{{false, false}, {true, false}, {false, true}, {true, true}} {
+		t.Run(fmt.Sprintf("self=%t/recursive=%t", tt.self, tt.recursive), func(t *testing.T) {
 			dir := t.TempDir()
 			writePreviewFile(t, dir, "apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app\n")
-			if self {
+			if tt.self {
 				writePreviewFile(t, dir, "apps/ks.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: self\n  namespace: flux-system\nspec:\n  path: ./apps\n")
 			}
-			p, err := New(WithLogger(logr.Discard()), WithPaths([]string{"apps", "./apps", "apps/../apps"}, false), WithFluxKS())
+			p, err := New(WithLogger(logr.Discard()), WithPaths([]string{"apps", "./apps", "apps/../apps"}, tt.recursive), WithFluxKS())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -98,6 +98,111 @@ func TestRenderGraphConflictingProducersRemainIncomplete(t *testing.T) {
 	}
 	if err := p.Test(context.Background(), dir, &bytes.Buffer{}); err == nil {
 		t.Fatal("Test(conflicting producers) succeeded, want incomplete")
+	}
+}
+
+func TestRenderGraphRecursiveBootstrapChild(t *testing.T) {
+	for _, recursive := range []bool{false, true} {
+		t.Run(fmt.Sprintf("recursive=%t", recursive), func(t *testing.T) {
+			dir := t.TempDir()
+			writePreviewFile(t, dir, "tree/ks.yaml", "apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: child\n  namespace: flux-system\nspec:\n  path: tree/apps\n")
+			writePreviewFile(t, dir, "tree/apps/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app\n")
+			p, err := New(WithLogger(logr.Discard()), WithPaths([]string{"tree", "./tree"}, recursive), WithFluxKS())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := p.Test(context.Background(), dir, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Test(recursive child) = %v, want success", err)
+			}
+			run, err := p.RunDiff(context.Background(), DiffRunOptions{LeftPath: dir, RightPath: dir})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !run.Complete || run.Result.TotalChanged() != 0 || len(run.Warnings) != 0 {
+				t.Fatalf("RunDiff(recursive child) = %#v, want complete unchanged result without warnings", run)
+			}
+		})
+	}
+}
+
+func TestRenderGraphRecursiveBootstrapContexts(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		owners    []string
+		context   string
+		resource  string
+		wantNames []string
+		wantError bool
+	}{
+		{name: "conflicting owners", owners: []string{"first", "second"}, resource: "app", wantError: true},
+		{name: "namespace", owners: []string{"child"}, context: "  targetNamespace: apps\n", resource: "app", wantNames: []string{"/app", "apps/app"}},
+		{name: "substitution", owners: []string{"child"}, context: "  postBuild:\n    substitute:\n      NAME: resolved\n", resource: "${NAME}", wantNames: []string{"/${NAME}", "/resolved"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for _, owner := range tt.owners {
+				writePreviewFile(t, dir, "tree/"+owner+".yaml", fmt.Sprintf("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: %s\n  namespace: flux-system\nspec:\n  path: tree/apps\n%s", owner, tt.context))
+			}
+			writePreviewFile(t, dir, "tree/apps/cm.yaml", fmt.Sprintf("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: %s\n", tt.resource))
+			p, err := New(WithLogger(logr.Discard()), WithPaths([]string{"tree"}, true), WithFluxKS())
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = p.Test(context.Background(), dir, &bytes.Buffer{})
+			if (err != nil) != tt.wantError {
+				t.Fatalf("Test(%s) = %v, want error=%t", tt.name, err, tt.wantError)
+			}
+			if tt.wantError {
+				return
+			}
+			loaded, err := p.loadRepo(context.Background(), dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			names := make(map[string]bool)
+			for _, res := range loaded[""].render.Resources() {
+				if res.GetKind() == "ConfigMap" {
+					names[res.GetNamespace()+"/"+res.GetName()] = true
+				}
+			}
+			if len(names) != len(tt.wantNames) {
+				t.Fatalf("ConfigMaps = %v, want %v", names, tt.wantNames)
+			}
+			for _, name := range tt.wantNames {
+				if !names[name] {
+					t.Errorf("ConfigMaps = %v, missing %s", names, name)
+				}
+			}
+		})
+	}
+}
+
+func TestRenderGraphRecursiveKustomizeBoundary(t *testing.T) {
+	for _, target := range []string{"tree/apps", "tree/apps/raw"} {
+		t.Run(target, func(t *testing.T) {
+			dir := t.TempDir()
+			writePreviewFile(t, dir, "tree/ks.yaml", fmt.Sprintf("apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: child\n  namespace: flux-system\nspec:\n  path: %s\n", target))
+			writePreviewFile(t, dir, "tree/apps/kustomization.yaml", "resources:\n- raw/cm.yaml\nnamePrefix: built-\n")
+			writePreviewFile(t, dir, "tree/apps/raw/cm.yaml", "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app\n")
+			p, err := New(WithLogger(logr.Discard()), WithPaths([]string{"tree"}, true), WithFluxKS())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := p.Test(context.Background(), dir, &bytes.Buffer{}); err != nil {
+				t.Fatal(err)
+			}
+			loaded, err := p.loadRepo(context.Background(), dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := 2 // Flux Kustomization plus the Kustomize-transformed ConfigMap.
+			if target == "tree/apps/raw" {
+				want++ // This directory was not independently built by bootstrap.
+			}
+			if got := loaded[""].render.Size(); got != want {
+				t.Errorf("render size = %d, want %d", got, want)
+			}
+		})
 	}
 }
 

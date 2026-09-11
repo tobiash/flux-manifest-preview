@@ -217,20 +217,20 @@ func (r *Render) AddPaths(fSys filesys.FileSystem, root string) error {
 
 // AddPathsWithProducer recursively loads resources from a directory and records the producer.
 func (r *Render) AddPathsWithProducer(fSys filesys.FileSystem, root, producer string) error {
-	isKust := isKustomization(fSys, root)
-	if isKust {
-		if err := r.AddKustomizationWithProducer(fSys, root, producer); err != nil {
-			return err
-		}
-	} else {
-		if err := r.addRawYAMLFiles(fSys, root, producer); err != nil {
-			return err
-		}
+	return WalkPaths(fSys, root, func(path string) error {
+		return r.AddPathWithProducer(fSys, path, producer)
+	})
+}
+
+// WalkPaths visits independent build directories, stopping below Kustomize bases.
+func WalkPaths(fSys filesys.FileSystem, root string, visit func(string) error) error {
+	if err := visit(root); err != nil {
+		return err
 	}
 
 	// Only recurse into subdirectories if this was not a kustomize base.
 	// Kustomize already loads referenced resources from subdirectories.
-	if isKust {
+	if isKustomization(fSys, root) {
 		return nil
 	}
 
@@ -242,7 +242,7 @@ func (r *Render) AddPathsWithProducer(fSys filesys.FileSystem, root, producer st
 	for _, name := range entries {
 		sub := filepath.Join(root, name)
 		if fSys.IsDir(sub) {
-			if err := r.AddPathsWithProducer(fSys, sub, producer); err != nil {
+			if err := WalkPaths(fSys, sub, visit); err != nil {
 				return err
 			}
 		}
@@ -349,17 +349,25 @@ func duplicateWarning(id, existingProducer, newProducer, source string) error {
 
 func provenanceForResource(res *resource.Resource, fallback Provenance) Provenance {
 	annotations := res.GetAnnotations()
-	if producer := annotations[ProducerAnnotation]; producer != "" {
-		return TextProvenance(producer)
-	}
-
+	producer := annotations[ProducerAnnotation]
 	labels := res.GetLabels()
 	if name := labels["helm.toolkit.fluxcd.io/name"]; name != "" {
 		ns := labels["helm.toolkit.fluxcd.io/namespace"]
+		origin := HelmReleaseProvenance(ns, name)
+		// Helm's runner writes matching source labels and a display annotation.
+		// Unrelated explicit producer annotations must still take precedence.
+		if ns != "" && producer == origin.String() {
+			return origin
+		}
 		if ns == "" {
 			ns = res.GetNamespace()
 		}
-		return HelmReleaseProvenance(ns, name)
+		if producer == "" {
+			return HelmReleaseProvenance(ns, name)
+		}
+	}
+	if producer != "" {
+		return TextProvenance(producer)
 	}
 	return fallback
 }

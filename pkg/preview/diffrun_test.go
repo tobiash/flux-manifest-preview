@@ -3,14 +3,88 @@ package preview
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/go-logr/logr"
 	"github.com/tobiash/flux-manifest-preview/pkg/ai"
 	"github.com/tobiash/flux-manifest-preview/pkg/config"
+	"github.com/tobiash/flux-manifest-preview/pkg/diff"
+	"github.com/tobiash/flux-manifest-preview/pkg/render"
 	helmcli "helm.sh/helm/v4/pkg/cli"
 )
+
+func TestRunDiffLocalHelmChartStructuredOrigins(t *testing.T) {
+	left, right := t.TempDir(), t.TempDir()
+	for i, dir := range []string{left, right} {
+		writePreviewFile(t, dir, "root/resources.yaml", fmt.Sprintf(`apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: charts
+  namespace: flux-system
+spec:
+  url: %s
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: origin
+  namespace: flux-system
+spec:
+  releaseName: destination
+  targetNamespace: apps
+  chart:
+    spec:
+      chart: chart
+      sourceRef:
+        kind: GitRepository
+        name: charts
+`, dir))
+		writePreviewFile(t, dir, "chart/Chart.yaml", "apiVersion: v2\nname: local\nversion: 0.1.0\n")
+		writePreviewFile(t, dir, "chart/templates/cm.yaml", fmt.Sprintf("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}\n  namespace: {{ .Release.Namespace }}\ndata:\n  value: %q\n", fmt.Sprint(i)))
+	}
+	p, err := New(WithLogger(logr.Discard()), WithPaths([]string{"root"}, false), WithFluxKS(), WithGitRepo(), WithHelm(helmcli.New()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(p.gitRepoExpander.Cleanup)
+	run, err := p.RunDiff(context.Background(), DiffRunOptions{LeftPath: left, RightPath: right})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !run.Complete || len(run.Warnings) != 0 {
+		t.Fatalf("RunDiff(local chart) = %#v, want complete without warnings", run)
+	}
+	data, err := json.Marshal(run.Result.ToJSON())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output diff.DiffResultJSON
+	if err := json.Unmarshal(data, &output); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, change := range output.Changes {
+		if change.ObjectRef.Kind != "ConfigMap" {
+			continue
+		}
+		found = true
+		if change.Action != "modified" || change.ObjectRef.Name != "destination" || change.ObjectRef.Namespace != "apps" {
+			t.Errorf("local chart change = %#v, want modified ConfigMap apps/destination", change)
+		}
+		want := render.HelmReleaseProvenance("flux-system", "origin")
+		for name, origin := range map[string]*render.Provenance{"provenance": &change.Provenance, "beforeOrigin": change.BeforeOrigin, "afterOrigin": change.AfterOrigin} {
+			if origin == nil || origin.Kind != want.Kind || origin.Name != want.Name || origin.Namespace != want.Namespace {
+				t.Errorf("local chart %s = %#v, want %#v", name, origin, want)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("RunDiff(local chart) omitted ConfigMap change: %s", data)
+	}
+}
 
 func TestRunDiffKeepsPartialResultWhenHelmExpansionWarns(t *testing.T) {
 	left := t.TempDir()
