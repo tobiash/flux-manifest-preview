@@ -42,6 +42,8 @@ func NewExpanderWithResolver(log logr.Logger, resolver SourceResolver) *Expander
 
 func (e *Expander) Expand(_ context.Context, r *render.Render) (*expander.ExpandResult, error) {
 	var paths []expander.DiscoveredPath
+	var errs []error
+	var deferredErrors []error
 
 	for _, res := range r.Resources() {
 		gvk := res.GetGvk()
@@ -51,24 +53,20 @@ func (e *Expander) Expand(_ context.Context, r *render.Render) (*expander.Expand
 
 		ks, err := decodeKustomization(res)
 		if err != nil {
-			e.log.Error(err, "skipping Flux Kustomization", "name", res.GetName())
+			errs = append(errs, err)
 			continue
 		}
-		if ks.Spec.Path == "" {
-			e.log.Error(fmt.Errorf("kustomization %s/%s has no spec.path", ks.Namespace, ks.Name), "skipping Flux Kustomization", "name", ks.Name)
-			continue
-		}
-
 		path := ks.Spec.Path
 		path = strings.TrimPrefix(path, "./")
 		path = filepath.Clean(path)
-		if path == "." {
-			continue
-		}
 
 		dp := expander.DiscoveredPath{
 			Path:     path,
 			Producer: fmt.Sprintf("Kustomization %s/%s", ks.Namespace, ks.Name),
+		}
+		if ks.Spec.SourceRef.Kind != "" && ks.Spec.SourceRef.Kind != "GitRepository" {
+			errs = append(errs, fmt.Errorf("%s: unsupported source kind %q", dp.Producer, ks.Spec.SourceRef.Kind))
+			continue
 		}
 
 		if ks.Spec.TargetNamespace != "" {
@@ -88,6 +86,9 @@ func (e *Expander) Expand(_ context.Context, r *render.Render) (*expander.Expand
 			}
 			if baseDir, ok := e.resolver.ResolvePath(ns, ks.Spec.SourceRef.Name); ok {
 				dp.BaseDir = baseDir
+			} else {
+				deferredErrors = append(deferredErrors, fmt.Errorf("%s: unresolved GitRepository %s/%s", dp.Producer, ns, ks.Spec.SourceRef.Name))
+				continue
 			}
 		}
 
@@ -96,7 +97,7 @@ func (e *Expander) Expand(_ context.Context, r *render.Render) (*expander.Expand
 		paths = append(paths, dp)
 	}
 
-	return &expander.ExpandResult{DiscoveredPaths: paths}, nil
+	return &expander.ExpandResult{DiscoveredPaths: paths, Errors: errs, DeferredErrors: deferredErrors}, nil
 }
 
 func decodeKustomization(res *resource.Resource) (*fluxksv1.Kustomization, error) {

@@ -2,10 +2,12 @@ package preview
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 
 	"github.com/tobiash/flux-manifest-preview/pkg/expander"
+	"github.com/tobiash/flux-manifest-preview/pkg/render"
 	"github.com/tobiash/flux-manifest-preview/pkg/sops"
 )
 
@@ -14,12 +16,39 @@ type fluxRenderGraph struct {
 }
 
 func (g fluxRenderGraph) Load(ctx context.Context) (*loadRepoResult, error) {
-	discovery := expander.DiscoveryRunner{
-		Expanders:  g.loader.preview.expandersForSource(g.loader.root),
-		PathKey:    g.pathKey,
-		RenderPath: g.renderPath,
+	initial := g.initialPaths()
+	roots := make(map[string]bool, len(initial))
+	for _, path := range initial {
+		roots[g.pathKey(path)] = true
 	}
-	expanded, err := discovery.Run(ctx, g.loader.render, g.initialPaths())
+	bootstrap := make(map[string]string)
+	visited := make(map[string]bool)
+	discovery := expander.DiscoveryRunner{
+		Expanders: g.loader.preview.expandersForSource(g.loader.root),
+		PathKey:   g.pathKey,
+		RenderPath: func(path expander.DiscoveredPath) error {
+			return g.renderPathWithBuildFilter(path, func(build expander.DiscoveredPath) bool {
+				identity := g.pathKey(build)
+				if visited[identity] {
+					return false
+				}
+				visited[identity] = true
+				buildContext := build
+				buildContext.Producer = ""
+				key := g.pathKey(buildContext)
+				if producer, ok := bootstrap[key]; ok && producer != build.Producer {
+					// Only the first equivalent Flux owner reuses a bootstrap build.
+					delete(bootstrap, key)
+					return false
+				}
+				if roots[g.pathKey(path)] {
+					bootstrap[key] = build.Producer
+				}
+				return true
+			})
+		},
+	}
+	expanded, err := discovery.Run(ctx, g.loader.render, initial)
 	if err != nil {
 		return nil, g.loader.clusterErrorf("%w", err)
 	}
@@ -41,12 +70,17 @@ func (g fluxRenderGraph) Load(ctx context.Context) (*loadRepoResult, error) {
 func (g fluxRenderGraph) initialPaths() []expander.DiscoveredPath {
 	initial := make([]expander.DiscoveredPath, len(g.loader.paths))
 	for i, path := range g.loader.paths {
+		path = filepath.Clean(path)
 		initial[i] = expander.DiscoveredPath{Path: path, Producer: fmt.Sprintf("path %s", path)}
 	}
 	return initial
 }
 
 func (g fluxRenderGraph) renderPath(path expander.DiscoveredPath) error {
+	return g.renderPathWithBuildFilter(path, nil)
+}
+
+func (g fluxRenderGraph) renderPathWithBuildFilter(path expander.DiscoveredPath, shouldBuild func(expander.DiscoveredPath) bool) error {
 	baseDir := path.BaseDir
 	if baseDir == "" {
 		baseDir = g.loader.root
@@ -56,33 +90,44 @@ func (g fluxRenderGraph) renderPath(path expander.DiscoveredPath) error {
 		if g.userPath(path.Path) {
 			return fmt.Errorf("path %q does not exist", path.Path)
 		}
-		g.loader.log.V(1).Info("skipping non-existent path", "path", path.Path)
-		return nil
+		return fmt.Errorf("%s: discovered path %q does not exist", path.Producer, full)
 	}
 
 	g.loader.log.V(1).Info("rendering path", "path", path.Path, "baseDir", path.BaseDir)
-	count := g.loader.render.Size()
+	// Transform each build before merging; raw identities can overlap across contexts.
+	built := render.NewDefaultRender(g.loader.log)
 	producer := path.Producer
 	if producer == "" {
 		producer = fmt.Sprintf("path %s", path.Path)
 	}
+	visit := func(dir string) error {
+		build := path
+		build.BaseDir = dir
+		build.Path = "."
+		if shouldBuild != nil && !shouldBuild(build) {
+			return nil
+		}
+		return built.AddPathWithProducer(g.loader.fs, dir, producer)
+	}
 	if g.loader.preview.recursive {
-		if err := g.loader.render.AddPathsWithProducer(g.loader.fs, full, producer); err != nil {
+		if err := render.WalkPaths(g.loader.fs, full, visit); err != nil {
 			return fmt.Errorf("failed to add path %s: %w", full, err)
 		}
 	} else {
-		if err := g.loader.render.AddPathWithProducer(g.loader.fs, full, producer); err != nil {
+		if err := visit(full); err != nil {
 			return fmt.Errorf("failed to add path %s: %w", full, err)
 		}
 	}
-	if err := g.loader.render.ApplySubstitutionsToNew(count, producer, path.Substitutions); err != nil {
+	if err := built.ApplySubstitutionsToNew(0, producer, path.Substitutions); err != nil {
 		return fmt.Errorf("failed to apply postBuild substitutions for path %s: %w", full, err)
 	}
 	if path.Namespace != "" {
-		g.loader.render.ApplyNamespaceToNew(count, path.Namespace)
+		if err := built.ApplyNamespaceToNew(0, path.Namespace); err != nil {
+			return fmt.Errorf("applying target namespace for %s: %w", producer, err)
+		}
 	}
-	g.loader.render.MarkProvenanceToNew(count, producer)
-	return nil
+	built.MarkProvenanceToNew(0, producer)
+	return g.loader.render.AbsorbAll(built)
 }
 
 func (g fluxRenderGraph) pathKey(path expander.DiscoveredPath) string {
@@ -90,7 +135,13 @@ func (g fluxRenderGraph) pathKey(path expander.DiscoveredPath) string {
 	if baseDir == "" {
 		baseDir = g.loader.root
 	}
-	return filepath.Join(baseDir, path.Path)
+	path.Path = filepath.Join(baseDir, path.Path)
+	path.BaseDir = ""
+	if len(path.Substitutions) == 0 {
+		path.Substitutions = nil
+	}
+	key, _ := json.Marshal(path) // DiscoveredPath contains only JSON-safe strings and maps.
+	return string(key)
 }
 
 func (g fluxRenderGraph) userPath(path string) bool {

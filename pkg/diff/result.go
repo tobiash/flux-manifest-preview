@@ -2,6 +2,7 @@ package diff
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"sort"
 
@@ -21,6 +22,7 @@ type ObjectRef struct {
 
 // DiffResultJSON is the JSON representation of a manifest diff.
 type DiffResultJSON struct {
+	Changes  []DiffChangeJSON `json:"changes"`
 	Added    []map[string]any `json:"added"`
 	Deleted  []ObjectRef      `json:"deleted"`
 	Modified []DiffChangeJSON `json:"modified"`
@@ -28,28 +30,34 @@ type DiffResultJSON struct {
 
 // DiffChangeJSON represents a modified resource with before/after snapshots.
 type DiffChangeJSON struct {
-	ObjectRef   ObjectRef      `json:"objectRef"`
-	Cluster     string         `json:"cluster,omitempty"`
-	Producer    string         `json:"producer,omitempty"`
-	Old         map[string]any `json:"old"`
-	New         map[string]any `json:"new"`
-	UnifiedDiff string         `json:"unifiedDiff"`
+	Action       string             `json:"action"`
+	Provenance   render.Provenance  `json:"provenance"`
+	BeforeOrigin *render.Provenance `json:"beforeOrigin,omitempty"`
+	AfterOrigin  *render.Provenance `json:"afterOrigin,omitempty"`
+	ObjectRef    ObjectRef          `json:"objectRef"`
+	Cluster      string             `json:"cluster,omitempty"`
+	Producer     string             `json:"producer,omitempty"`
+	Old          map[string]any     `json:"old"`
+	New          map[string]any     `json:"new"`
+	UnifiedDiff  string             `json:"unifiedDiff"`
 }
 
 // ResourceChange describes a single resource change in a diff.
 type ResourceChange struct {
-	Cluster    string
-	ID         resid.ResId
-	Kind       string
-	Name       string
-	Namespace  string
-	Provenance render.Provenance
-	Producer   string
-	Action     string // added, deleted, modified
-	Old        map[string]any
-	New        map[string]any
-	oldYAML    string
-	newYAML    string
+	BeforeOrigin *render.Provenance
+	AfterOrigin  *render.Provenance
+	Cluster      string
+	ID           resid.ResId
+	Kind         string
+	Name         string
+	Namespace    string
+	Provenance   render.Provenance
+	Producer     string
+	Action       string // added, deleted, modified
+	Old          map[string]any
+	New          map[string]any
+	oldYAML      string
+	newYAML      string
 }
 
 // DiffResult holds the structured result of a diff between two renders.
@@ -172,7 +180,15 @@ func (r *DiffResult) ByKind() map[string]int {
 
 // ToJSON converts the diff result to a JSON-serializable structure.
 func (r *DiffResult) ToJSON() *DiffResultJSON {
-	out := &DiffResultJSON{}
+	out := &DiffResultJSON{Added: []map[string]any{}, Deleted: []ObjectRef{}, Modified: []DiffChangeJSON{}, Changes: []DiffChangeJSON{}}
+	for _, c := range r.Changes() {
+		out.Changes = append(out.Changes, DiffChangeJSON{
+			ObjectRef: ObjectRef{APIVersion: gvkAPIVersion(c.ID.Group, c.ID.Version), Kind: c.Kind, Name: c.Name, Namespace: c.Namespace},
+			Action:    c.Action, Cluster: c.Cluster, Producer: c.Producer, Provenance: c.Provenance,
+			BeforeOrigin: c.BeforeOrigin, AfterOrigin: c.AfterOrigin,
+			Old: c.Old, New: c.New, UnifiedDiff: c.UnifiedDiff(),
+		})
+	}
 	for _, c := range r.Added {
 		out.Added = append(out.Added, c.New)
 	}
@@ -186,6 +202,7 @@ func (r *DiffResult) ToJSON() *DiffResultJSON {
 	}
 	for _, c := range r.Modified {
 		out.Modified = append(out.Modified, DiffChangeJSON{
+			Action: c.Action, Provenance: c.Provenance, BeforeOrigin: c.BeforeOrigin, AfterOrigin: c.AfterOrigin,
 			ObjectRef: ObjectRef{
 				APIVersion: gvkAPIVersion(c.ID.Group, c.ID.Version),
 				Kind:       c.Kind,
@@ -235,6 +252,17 @@ func DiffWithResult(a, b *render.Render, w io.Writer) (*DiffResult, error) {
 
 // ChangeSet computes structured resource changes between two renders.
 func ChangeSet(a, b *render.Render) (*DiffResult, error) {
+	// k8q v0.3 indexes nodes by identity without rejecting duplicate inputs.
+	for side, rendered := range []*render.Render{a, b} {
+		seen := make(map[resid.ResId]bool)
+		for _, resource := range rendered.Resources() {
+			id := resource.CurId()
+			if seen[id] {
+				return nil, fmt.Errorf("duplicate resource %s on comparison side %d", id, side+1)
+			}
+			seen[id] = true
+		}
+	}
 	result, err := k8qdiff.DiffNodes(renderToRNodes(a), renderToRNodes(b))
 	if err != nil {
 		return nil, err
@@ -249,15 +277,16 @@ func ChangeSet(a, b *render.Render) (*DiffResult, error) {
 			continue
 		}
 		fmpResult.Added = append(fmpResult.Added, ResourceChange{
-			ID:         id,
-			Kind:       view.Kind,
-			Name:       view.Name,
-			Namespace:  view.Namespace,
-			Provenance: view.Provenance,
-			Producer:   view.Producer,
-			Action:     "added",
-			New:        view.Object,
-			newYAML:    view.YAML,
+			AfterOrigin: &view.Provenance,
+			ID:          id,
+			Kind:        view.Kind,
+			Name:        view.Name,
+			Namespace:   view.Namespace,
+			Provenance:  view.Provenance,
+			Producer:    view.Producer,
+			Action:      "added",
+			New:         view.Object,
+			newYAML:     view.YAML,
 		})
 	}
 
@@ -268,15 +297,16 @@ func ChangeSet(a, b *render.Render) (*DiffResult, error) {
 			continue
 		}
 		fmpResult.Deleted = append(fmpResult.Deleted, ResourceChange{
-			ID:         id,
-			Kind:       view.Kind,
-			Name:       view.Name,
-			Namespace:  view.Namespace,
-			Provenance: view.Provenance,
-			Producer:   view.Producer,
-			Action:     "deleted",
-			Old:        view.Object,
-			oldYAML:    view.YAML,
+			BeforeOrigin: &view.Provenance,
+			ID:           id,
+			Kind:         view.Kind,
+			Name:         view.Name,
+			Namespace:    view.Namespace,
+			Provenance:   view.Provenance,
+			Producer:     view.Producer,
+			Action:       "deleted",
+			Old:          view.Object,
+			oldYAML:      view.YAML,
 		})
 	}
 
@@ -298,17 +328,19 @@ func ChangeSet(a, b *render.Render) (*DiffResult, error) {
 		}
 
 		fmpResult.Modified = append(fmpResult.Modified, ResourceChange{
-			ID:         id,
-			Kind:       after.Kind,
-			Name:       after.Name,
-			Namespace:  after.Namespace,
-			Provenance: after.Provenance,
-			Producer:   after.Producer,
-			Action:     "modified",
-			Old:        before.Object,
-			New:        after.Object,
-			oldYAML:    aYAML,
-			newYAML:    bYAML,
+			BeforeOrigin: &before.Provenance,
+			AfterOrigin:  &after.Provenance,
+			ID:           id,
+			Kind:         after.Kind,
+			Name:         after.Name,
+			Namespace:    after.Namespace,
+			Provenance:   after.Provenance,
+			Producer:     after.Producer,
+			Action:       "modified",
+			Old:          before.Object,
+			New:          after.Object,
+			oldYAML:      aYAML,
+			newYAML:      bYAML,
 		})
 	}
 
