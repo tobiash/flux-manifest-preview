@@ -150,6 +150,7 @@ func TestRunDiff_NoArgsResolveGitReusesCurrentRepo(t *testing.T) {
 	repo := initGitRepo(t)
 	gitRun(t, repo, "remote", "add", "origin", "https://github.com/tobiash/kube.git")
 	writeFile(t, repo, ".fmp.yaml", "paths:\n  - .\nsort: true\n")
+	writeFile(t, repo, "kustomization.yaml", "resources:\n  - sources.yaml\n")
 	writeFile(t, repo, "sources.yaml", `apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata:

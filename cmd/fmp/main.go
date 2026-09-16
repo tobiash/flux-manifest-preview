@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"github.com/go-logr/zerologr"
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	helmcli "helm.sh/helm/v4/pkg/cli"
 
 	"github.com/tobiash/flux-manifest-preview/pkg/config"
@@ -38,6 +40,7 @@ var (
 	diffSummaryOnly bool
 	diffHTML        bool
 	diffHTMLOpen    bool
+	diffExitCode    bool
 	aiAssessment    bool
 	aiProvider      string
 	aiModel         string
@@ -53,6 +56,7 @@ var (
 )
 
 func main() {
+	var jsonOutput bytes.Buffer
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixMs
 	zerologr.NameFieldName = "logger"
 	zerologr.NameSeparator = "/"
@@ -60,6 +64,15 @@ func main() {
 	rootCmd := &cobra.Command{
 		Use:   "fmp",
 		Short: "Flux Manifest Preview — render and diff Flux GitOps resources",
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			if cmd.Flags().Lookup("output") != nil && outputFormat != "yaml" && outputFormat != "json" {
+				return fmt.Errorf("%w: output must be yaml or json", ErrUserInput)
+			}
+			if cmd.Name() == "diff" && diffHTML && outputFormat == "json" {
+				return fmt.Errorf("%w: --html and --output json cannot be combined", ErrUserInput)
+			}
+			return nil
+		},
 	}
 
 	rootCmd.PersistentFlags().StringSliceVarP(&kustomizations, "path", "k", nil, "Path to render (kustomize base or directory of YAML, relative to repo root, repeatable)")
@@ -92,7 +105,7 @@ func main() {
 				return fmt.Errorf("error creating preview: %w", err)
 			}
 			if outputFormat == "json" {
-				return p.RenderJSON(context.Background(), args[0], os.Stdout)
+				return p.RenderJSON(context.Background(), args[0], &jsonOutput)
 			}
 			return p.Render(context.Background(), args[0], os.Stdout)
 		},
@@ -121,13 +134,14 @@ inputs, use explicit git: or path: prefixes.`,
 				return runDiffHTML(cmd, log, args)
 			}
 			if outputFormat == "json" {
-				return runDiffJSON(cmd, log, args, os.Stdout)
+				return runDiffJSON(cmd, log, args, &jsonOutput)
 			}
 			summaryOut, diffOut := diffOutputs(os.Stdout, os.Stderr)
 			return runDiff(cmd, log, args, summaryOut, diffOut)
 		},
 	}
 	diffCmd.Flags().StringVarP(&outputFormat, "output", "o", "yaml", "Output format (yaml or json)")
+	diffCmd.Flags().BoolVar(&diffExitCode, "exit-code", false, "Exit 1 when a complete diff has changes (default: exit 0)")
 	diffCmd.Flags().StringVar(&helmRelease, "hr", "", "Filter diff to a specific HelmRelease by name")
 	diffCmd.Flags().BoolVar(&diffSummary, "summary", false, "Print a human-readable change summary to stderr before the raw diff")
 	diffCmd.Flags().BoolVar(&diffSummaryOnly, "summary-only", false, "Print only the human-readable summary and suppress the raw diff")
@@ -153,7 +167,7 @@ inputs, use explicit git: or path: prefixes.`,
 			}
 			if outputFormat == "json" {
 				result, err := p.TestJSON(context.Background(), args[0])
-				enc := json.NewEncoder(os.Stdout)
+				enc := json.NewEncoder(&jsonOutput)
 				enc.SetIndent("", "  ")
 				if encErr := enc.Encode(result); encErr != nil {
 					return encErr
@@ -188,7 +202,7 @@ inputs, use explicit git: or path: prefixes.`,
 				return err
 			}
 			if outputFormat == "json" {
-				enc := json.NewEncoder(os.Stdout)
+				enc := json.NewEncoder(&jsonOutput)
 				enc.SetIndent("", "  ")
 				return enc.Encode(preview.KustomizationsToJSON(ks))
 			}
@@ -215,7 +229,7 @@ inputs, use explicit git: or path: prefixes.`,
 				return err
 			}
 			if outputFormat == "json" {
-				enc := json.NewEncoder(os.Stdout)
+				enc := json.NewEncoder(&jsonOutput)
 				enc.SetIndent("", "  ")
 				return enc.Encode(preview.HelmReleasesToJSON(hrs))
 			}
@@ -228,6 +242,7 @@ inputs, use explicit git: or path: prefixes.`,
 
 	ciCmd := &cobra.Command{
 		Use:   "ci",
+		Args:  cobra.NoArgs,
 		Short: "Run CI diff using environment variables",
 		Long: `Run CI diff using environment variables.
 Auto-discovers .fmp.yaml from FMP_REPO_A (base branch).
@@ -272,6 +287,7 @@ CLI flags and FMP_* env vars override the config file.`,
 	}
 	versionCmd := &cobra.Command{
 		Use:   "version",
+		Args:  cobra.NoArgs,
 		Short: "Print fmp version",
 		Run: func(cmd *cobra.Command, args []string) {
 			fmt.Printf("fmp %s\n", version)
@@ -308,6 +324,7 @@ Use --init to generate a complete .fmp.yaml config file in the repo.`,
 
 	describeCmd := &cobra.Command{
 		Use:    "describe",
+		Args:   cobra.NoArgs,
 		Short:  "Print JSON description of CLI and exit",
 		Hidden: true,
 		Run: func(cmd *cobra.Command, args []string) {
@@ -328,6 +345,9 @@ Use --init to generate a complete .fmp.yaml config file in the repo.`,
 				cmdDesc := map[string]any{
 					"name":        c.Name(),
 					"description": c.Short,
+					"usage":       c.UseLine(),
+					"long":        c.Long,
+					"flags":       describeFlags(c),
 				}
 				if len(c.Commands()) > 0 {
 					subcommands := []map[string]any{}
@@ -338,6 +358,8 @@ Use --init to generate a complete .fmp.yaml config file in the repo.`,
 						subcommands = append(subcommands, map[string]any{
 							"name":        sc.Name(),
 							"description": sc.Short,
+							"usage":       sc.UseLine(),
+							"flags":       describeFlags(sc),
 						})
 					}
 					cmdDesc["commands"] = subcommands
@@ -356,8 +378,8 @@ Use --init to generate a complete .fmp.yaml config file in the repo.`,
 
 	if err := rootCmd.Execute(); err != nil {
 		code := exitCodeFor(err)
-		if outputFormat == "json" {
-			writeJSONError(os.Stdout, err)
+		if outputFormat == "json" || requestsJSON(os.Args[1:]) {
+			writeJSONFailure(os.Stdout, jsonOutput.Bytes(), err)
 			os.Exit(code)
 		}
 		var expErr *preview.ExpansionError
@@ -373,16 +395,72 @@ Use --init to generate a complete .fmp.yaml config file in the repo.`,
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(code)
 	}
+	if jsonOutput.Len() > 0 {
+		if _, err := jsonOutput.WriteTo(os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
+}
+
+func describeFlags(cmd *cobra.Command) []map[string]any {
+	flags := []map[string]any{}
+	for _, set := range []*pflag.FlagSet{cmd.LocalFlags(), cmd.InheritedFlags()} {
+		set.VisitAll(func(flag *pflag.Flag) {
+			if !flag.Hidden {
+				flags = append(flags, map[string]any{"name": flag.Name, "shorthand": flag.Shorthand, "type": flag.Value.Type(), "default": flag.DefValue, "description": flag.Usage})
+			}
+		})
+	}
+	return flags
+}
+
+// Inspect raw arguments too: Cobra can stop parsing before reaching --output.
+func requestsJSON(args []string) bool {
+	for i, arg := range args {
+		if arg == "--" {
+			break
+		}
+		if arg == "--output=json" || arg == "-o=json" || arg == "-ojson" ||
+			((arg == "--output" || arg == "-o") && i+1 < len(args) && args[i+1] == "json") {
+			return true
+		}
+	}
+	return false
+}
+
+func writeJSONFailure(out io.Writer, data []byte, err error) {
+	var doc map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if decoder.Decode(&doc) != nil || doc == nil {
+		doc = map[string]any{"data": nil}
+	}
+	doc["status"] = "failure"
+	if _, ok := doc["complete"]; !ok {
+		doc["complete"] = false
+	}
+	doc["error"] = jsonError{Reason: "CommandFailed", Message: err.Error()}
+	var expansionErr *preview.ExpansionError
+	if _, exists := doc["warnings"]; !exists && errors.As(err, &expansionErr) {
+		warnings := []string{}
+		for _, warning := range expansionErr.Warnings {
+			warnings = append(warnings, warning.Error())
+		}
+		doc["warnings"] = warnings
+	}
+	enc := json.NewEncoder(out)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(doc)
 }
 
 // Semantic exit codes for agent-friendly error handling.
 //
-//	0 = success
-//	1 = differences found (diff only) or generic error
-//	2 = user input error (bad args, missing file, invalid config)
-//	3 = dependency failure (Helm chart missing, git error, network)
-//	5 = policy violation
-//	10 = unexpected internal error
+//	0 = successful command (including differences unless --exit-code is set)
+//	1 = differences with --exit-code, or any error not matched below
+//	2 = errors wrapping ErrUserInput
+//	3 = errors wrapping ErrDependency or containing preview.ExpansionError
+//	5 = errors wrapping ErrPolicyViolation
 var (
 	ErrUserInput       = errors.New("user input error")
 	ErrDependency      = errors.New("dependency failure")
@@ -399,8 +477,7 @@ func exitCodeFor(err error) int {
 	if errors.Is(err, ErrPolicyViolation) {
 		return 5
 	}
-	// Expansion errors are treated as dependency failures if they contain
-	// render/Helm errors, otherwise generic.
+	// Every ExpansionError maps to dependency failure.
 	var expErr *preview.ExpansionError
 	if errors.As(err, &expErr) {
 		return 3
@@ -408,31 +485,10 @@ func exitCodeFor(err error) int {
 	return 1
 }
 
-// jsonErrorEnvelope is the structured error output used when --output json is set.
-type jsonErrorEnvelope struct {
-	Status string    `json:"status"`
-	Data   any       `json:"data"`
-	Error  jsonError `json:"error"`
-}
-
 type jsonError struct {
 	Reason  string         `json:"reason"`
 	Message string         `json:"message"`
 	Details map[string]any `json:"details,omitempty"`
-}
-
-func writeJSONError(out io.Writer, err error) {
-	env := jsonErrorEnvelope{
-		Status: "failure",
-		Data:   nil,
-		Error: jsonError{
-			Reason:  "CommandFailed",
-			Message: err.Error(),
-		},
-	}
-	enc := json.NewEncoder(out)
-	enc.SetIndent("", "  ")
-	_ = enc.Encode(env)
 }
 
 func cliLogger() logr.Logger {

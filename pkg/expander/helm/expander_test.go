@@ -105,6 +105,9 @@ func TestRenderAllCharts_PassesPostRendererToRunner(t *testing.T) {
 	if runner.tasks[0].postRenderer == nil {
 		t.Fatal("expected render task to include a post renderer")
 	}
+	if got := runner.tasks[0].origin; got != render.HelmReleaseProvenance("default", "podinfo") {
+		t.Errorf("task origin = %+v, want HelmRelease default/podinfo", got)
+	}
 
 	out, err := runPostRenderer(runner.tasks[0].postRenderer, bytes.NewBufferString(`apiVersion: v1
 kind: ConfigMap

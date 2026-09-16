@@ -3,6 +3,7 @@ package preview
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -119,16 +120,22 @@ func (p *Preview) RenderJSON(ctx context.Context, path string, out io.Writer) er
 	if err != nil {
 		return fmt.Errorf("error loading repo: %w", err)
 	}
+	diagnostics := &ExpansionError{}
+	clusters := sortedClusterNames(results)
+	for _, cluster := range clusters {
+		diagnostics.Errors = append(diagnostics.Errors, results[cluster].errors...)
+		diagnostics.Warnings = append(diagnostics.Warnings, results[cluster].warnings...)
+	}
 	if p.isClustered() {
 		items := make([]map[string]any, 0)
-		clusters := sortedClusterNames(results)
 		for _, cluster := range clusters {
 			result := results[cluster]
 			p.applyOutputOptions(result.render)
-			for _, res := range result.render.Resources() {
+			for i, res := range result.render.Resources() {
 				m, err := res.Map()
 				if err != nil {
-					continue
+					diagnostics.Errors = append(diagnostics.Errors, fmt.Errorf("converting cluster %q resource %d to JSON map: %w", cluster, i+1, err))
+					return diagnostics
 				}
 				m["_fmp_cluster"] = cluster
 				items = append(items, m)
@@ -144,12 +151,8 @@ func (p *Preview) RenderJSON(ctx context.Context, path string, out io.Writer) er
 		if err := enc.Encode(list); err != nil {
 			return fmt.Errorf("error encoding json: %w", err)
 		}
-		var allErrors []error
-		for _, cluster := range clusters {
-			allErrors = append(allErrors, results[cluster].errors...)
-		}
-		if len(allErrors) > 0 {
-			return &ExpansionError{Errors: allErrors}
+		if len(diagnostics.Errors) > 0 {
+			return diagnostics
 		}
 		return nil
 	}
@@ -157,13 +160,14 @@ func (p *Preview) RenderJSON(ctx context.Context, path string, out io.Writer) er
 	p.applyOutputOptions(result.render)
 	jsonData, err := result.render.AsJSON()
 	if err != nil {
-		return fmt.Errorf("error transforming to json: %w", err)
+		diagnostics.Errors = append(diagnostics.Errors, fmt.Errorf("error transforming to json: %w", err))
+		return diagnostics
 	}
 	if _, err := out.Write(jsonData); err != nil {
 		return fmt.Errorf("error writing output: %w", err)
 	}
-	if len(result.errors) > 0 {
-		return &ExpansionError{Errors: result.errors, Warnings: result.warnings}
+	if len(diagnostics.Errors) > 0 {
+		return diagnostics
 	}
 	return nil
 }
@@ -197,9 +201,9 @@ func (p *Preview) Test(ctx context.Context, path string, out io.Writer) error {
 		}
 		if len(result.errors) > 0 {
 			for _, e := range result.errors {
-				_, _ = fmt.Fprintf(out, "WARN: %v\n", e)
+				_, _ = fmt.Fprintf(out, "ERROR: %v\n", e)
 			}
-			_, _ = fmt.Fprintln(out, "PASS (with warnings)")
+			_, _ = fmt.Fprintln(out, "FAIL (incomplete render)")
 		} else {
 			_, _ = fmt.Fprintln(out, "PASS")
 		}
@@ -221,10 +225,19 @@ func (p *Preview) TestJSON(ctx context.Context, path string) (*TestResult, error
 		}, err
 	}
 	var warnings []TestIssue
+	var issues []TestIssue
+	var expansionErrors []error
 	for _, cluster := range sortedClusterNames(results) {
 		for _, e := range results[cluster].errors {
+			issues = append(issues, TestIssue{Message: e.Error()})
+			expansionErrors = append(expansionErrors, e)
+		}
+		for _, e := range results[cluster].warnings {
 			warnings = append(warnings, TestIssue{Message: e.Error()})
 		}
+	}
+	if len(issues) > 0 {
+		return &TestResult{Status: "fail", Errors: issues, Warnings: warnings}, &ExpansionError{Errors: expansionErrors}
 	}
 	if len(warnings) > 0 {
 		return &TestResult{Status: "pass_with_warnings", Warnings: warnings}, nil
@@ -235,51 +248,19 @@ func (p *Preview) TestJSON(ctx context.Context, path string) (*TestResult, error
 // Diff computes and writes the diff between two repository paths.
 // If a HelmRelease filter is set, only resources from that release are included.
 func (p *Preview) Diff(ctx context.Context, a, b string, out io.Writer) error {
-	if p.isClustered() {
-		_, err := p.DiffResult(ctx, a, b, out)
-		return err
+	_, err := p.DiffResult(ctx, a, b, out)
+	var expansionErr *ExpansionError
+	if errors.As(err, &expansionErr) && len(expansionErr.Errors) == 0 {
+		return nil
 	}
-
-	// Load sequentially because configured KIO filters may carry mutable state.
-	arResults, err := p.freshLoadRepo(ctx, a)
-	if err != nil {
-		return fmt.Errorf("render error: %w", err)
-	}
-	brResults, err := p.freshLoadRepo(ctx, b)
-	if err != nil {
-		return fmt.Errorf("render error: %w", err)
-	}
-	ar := arResults[""]
-	br := brResults[""]
-
-	if p.helmReleaseName != "" {
-		ar.render.FilterByLabel("helm.toolkit.fluxcd.io/name", p.helmReleaseName)
-		br.render.FilterByLabel("helm.toolkit.fluxcd.io/name", p.helmReleaseName)
-	}
-
-	p.applyOutputOptions(ar.render)
-	p.applyOutputOptions(br.render)
-	if err := diff.Diff(ar.render, br.render, out); err != nil {
-		return fmt.Errorf("diff error: %w", err)
-	}
-	var allErrors []error
-	seen := make(map[string]bool)
-	for _, e := range append(ar.errors, br.errors...) {
-		msg := e.Error()
-		if !seen[msg] {
-			seen[msg] = true
-			allErrors = append(allErrors, e)
-		}
-	}
-	if len(allErrors) > 0 {
-		return &ExpansionError{Errors: allErrors}
-	}
-	return nil
+	return err
 }
 
 // DiffResult computes and writes the diff between two repository paths,
 // returning structured change metadata alongside the rendered diff text.
-func (p *Preview) DiffResult(ctx context.Context, a, b string, out io.Writer) (*diff.DiffResult, error) {
+// An ExpansionError with only Warnings accompanies a complete comparison;
+// expansion errors suppress all changes because either side may be incomplete.
+func (p *Preview) DiffResult(ctx context.Context, a, b string, out io.Writer) (result *diff.DiffResult, resultErr error) {
 	// Load sequentially because configured KIO filters may carry mutable state.
 	ar, err := p.freshLoadRepo(ctx, a)
 	if err != nil {
@@ -289,6 +270,21 @@ func (p *Preview) DiffResult(ctx context.Context, a, b string, out io.Writer) (*
 	if err != nil {
 		return nil, fmt.Errorf("render error: %w", err)
 	}
+	diagnostics := &ExpansionError{}
+	for _, results := range []map[string]*loadRepoResult{ar, br} {
+		for _, cluster := range sortedClusterNames(results) {
+			diagnostics.Errors = append(diagnostics.Errors, results[cluster].errors...)
+			diagnostics.Warnings = append(diagnostics.Warnings, results[cluster].warnings...)
+		}
+	}
+	if len(diagnostics.Errors) > 0 {
+		return &diff.DiffResult{}, diagnostics
+	}
+	defer func() {
+		if resultErr == nil && len(diagnostics.Warnings) > 0 {
+			resultErr = diagnostics
+		}
+	}()
 
 	if p.helmReleaseName != "" {
 		for _, r := range ar {
@@ -319,45 +315,12 @@ func (p *Preview) DiffResult(ctx context.Context, a, b string, out io.Writer) (*
 		if err != nil {
 			return nil, fmt.Errorf("diff error: %w", err)
 		}
-		var allErrors []error
-		seen := make(map[string]bool)
-		for _, e := range ar {
-			for _, err := range e.errors {
-				if !seen[err.Error()] {
-					seen[err.Error()] = true
-					allErrors = append(allErrors, err)
-				}
-			}
-		}
-		for _, e := range br {
-			for _, err := range e.errors {
-				if !seen[err.Error()] {
-					seen[err.Error()] = true
-					allErrors = append(allErrors, err)
-				}
-			}
-		}
-		if len(allErrors) > 0 {
-			return result, &ExpansionError{Errors: allErrors}
-		}
 		return result, nil
 	}
 
-	result, err := diff.DiffWithResult(ar[""].render, br[""].render, out)
+	result, err = diff.DiffWithResult(ar[""].render, br[""].render, out)
 	if err != nil {
 		return nil, fmt.Errorf("diff error: %w", err)
-	}
-	var allErrors []error
-	seen := make(map[string]bool)
-	for _, e := range append(ar[""].errors, br[""].errors...) {
-		msg := e.Error()
-		if !seen[msg] {
-			seen[msg] = true
-			allErrors = append(allErrors, e)
-		}
-	}
-	if len(allErrors) > 0 {
-		return result, &ExpansionError{Errors: allErrors}
 	}
 	return result, nil
 }

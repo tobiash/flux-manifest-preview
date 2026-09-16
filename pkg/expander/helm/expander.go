@@ -224,6 +224,7 @@ func (s *expandState) renderAllCharts(ctx context.Context) (resmap.ResMap, []err
 			localChartPath:  src.localPath,
 			releaseName:     releaseName,
 			namespace:       namespace,
+			origin:          render.HelmReleaseProvenance(h.Namespace, h.Name),
 			skipCRDs:        install.SkipCRDs,
 			replace:         install.Replace,
 			disableHooks:    install.DisableHooks,
@@ -296,13 +297,11 @@ func (s *expandState) findChartURL(source *helmv2.HelmRelease) (chartSource, err
 		}
 	case "GitRepository":
 		if s.resolver == nil {
-			s.logger.V(1).Info("skipping HelmRelease with GitRepository chart source (requires --resolve-git)", "name", source.Name, "namespace", source.Namespace)
-			return chartSource{}, nil
+			return chartSource{}, fmt.Errorf("GitRepository chart source requires --resolve-git")
 		}
 		baseDir, ok := s.resolver.ResolvePath(namespace, name)
 		if !ok {
-			s.logger.V(1).Info("skipping HelmRelease with unresolved GitRepository chart source", "name", name, "namespace", namespace)
-			return chartSource{}, nil
+			return chartSource{}, fmt.Errorf("unresolved GitRepository %s/%s", namespace, name)
 		}
 		chartPath := strings.TrimPrefix(source.Spec.Chart.Spec.Chart, "./")
 		if chartPath == "" {

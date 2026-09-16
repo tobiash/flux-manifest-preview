@@ -5,9 +5,9 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/tobiash/flux-manifest-preview)](https://goreportcard.com/report/github.com/tobiash/flux-manifest-preview)
 [![License](https://img.shields.io/github/license/tobiash/flux-manifest-preview)](https://github.com/tobiash/flux-manifest-preview/blob/main/LICENSE)
 
-**Preview exactly what Flux would apply before a GitOps change reaches the cluster.**
+**Preview rendered Kubernetes resource changes before a GitOps change reaches the cluster.**
 
-`fmp` renders Flux repositories the way Flux does, compares two revisions, and turns the result into CLI diffs, structured JSON, PR comments, policy checks, exported manifests, and an interactive HTML report.
+`fmp` renders supported Flux, Helm, and Kustomize inputs, compares two revisions, and turns the result into CLI diffs, structured JSON, PR comments, policy checks, and an interactive HTML report. It is a local preview, not a complete implementation of Flux controller reconciliation or Kubernetes admission.
 
 It is built for Kubernetes platform teams reviewing Flux pull requests where the source YAML is not the whole story: `Kustomization` dependencies, `HelmRelease` rendering, external `GitRepository` sources, generated metadata, and multi-cluster layouts all affect the final manifests.
 
@@ -29,7 +29,6 @@ flowchart TD
     D --> E
     E --> F[CLI diffs and summaries]
     E --> G[Policy checks and PR labels]
-    E --> H[Exported manifests]
     E --> I[Interactive HTML report]
 ```
 
@@ -74,7 +73,7 @@ The report includes:
 - **Noise reduction** — normalize generated fields such as timestamps, random hashes, or certificate data.
 - **Policy checks** — classify changes, block risky PRs, and suggest/apply labels using built-in or custom Rego policies.
 - **AI assessment** — optionally generate a concise review summary and provenance-aware classifications with OpenAI, Anthropic, Z.AI, MiniMax, or OpenRouter.
-- **Agent-friendly output** — every major command supports structured JSON and stable semantic exit codes.
+- **Agent-friendly output** — render, diff, test, and discovery commands support structured JSON, with failure diagnostics kept in a single document.
 
 ---
 
@@ -108,6 +107,8 @@ fmp diff
 ```
 
 By default, this compares rendered manifests from `HEAD` with your current worktree, so you can review the cluster impact of uncommitted local changes.
+
+Configure `paths` or cluster roots in `.fmp.yaml`, or supply `-k/--path` (for example, `fmp diff -k clusters/production`). A repository argument selects the source directory; it does not implicitly select `.` as a render root. Missing render roots are an error.
 
 Common examples:
 
@@ -332,17 +333,7 @@ This publishes reports to the `gh-pages` branch. When Pages is not enabled, the 
 
 ### Export rendered manifests
 
-```yaml
-- uses: tobiash/flux-manifest-preview@vX.Y.Z
-  with:
-    repo: .
-    base-ref: origin/main
-    export-dir: ./rendered
-    export-changed-only: true
-
-- name: Validate with kubeconform
-  run: kubeconform ./rendered/*.yaml
-```
+The action's `export-dir` and `export-changed-only` inputs are reserved; manifest export is not implemented yet. Use `fmp render` for direct manifest output instead.
 
 ### Important inputs
 
@@ -366,8 +357,8 @@ This publishes reports to the `gh-pages` branch. When Pages is not enabled, the 
 | `ai-provider`         | AI provider override                               |                 |
 | `ai-model`            | AI model override                                  |                 |
 | `ai-fail-on-error`    | Fail if AI assessment cannot be generated          |                 |
-| `export-dir`          | Export rendered manifests directory                |                 |
-| `export-changed-only` | Only export changed manifests                      | `false`         |
+| `export-dir`          | Reserved; manifest export is not implemented       |                 |
+| `export-changed-only` | Reserved; manifest export is not implemented       | `false`         |
 | `fail-on-warning`     | Fail the step on warnings                          | `false`         |
 | `fail-on-error`       | Fail the step on errors                            | `true`          |
 
@@ -379,11 +370,11 @@ This publishes reports to the `gh-pages` branch. When Pages is not enabled, the 
 | `changed`                                                      | Whether manifest changes were detected                    |
 | `resources-added` / `resources-modified` / `resources-deleted` | Change counts                                             |
 | `resources-total`                                              | Total changed resources                                   |
-| `diff-file`                                                    | Full unified diff file                                    |
+| `diff-file`                                                    | Unified diff preview file; may be truncated                |
 | `summary-file`                                                 | Markdown summary file                                     |
 | `report-file`                                                  | Structured JSON report                                    |
 | `html-report-url`                                              | Direct URL to the interactive HTML report when available  |
-| `export-dir`                                                   | Directory where manifests were exported                   |
+| `export-dir`                                                   | Requested export directory; does not confirm an export    |
 | `classifications-json`                                         | Matched classifications with provenance                    |
 | `violations-json`                                              | Matched policy violations                                 |
 | `labels-json`                                                  | Suggested or applied PR labels                            |
@@ -398,7 +389,7 @@ This publishes reports to the `gh-pages` branch. When Pages is not enabled, the 
 
 ## Structured output and exit codes
 
-All commands that produce YAML or reports support `--output json`:
+`render`, `diff`, `test`, and `get ks/hr` support `--output json`:
 
 ```bash
 fmp diff --output json
@@ -408,20 +399,34 @@ fmp get ks --output json <path>
 fmp get hr --output json <path>
 ```
 
-JSON output follows Kubernetes API conventions:
+JSON output preserves the existing command-specific shapes:
 
-- lists are wrapped in a `v1/List` envelope with `apiVersion`, `kind`, and `items`
+- rendered resources are wrapped in a `v1/List` envelope; discovery commands use an `items` collection
 - resource references use `ObjectRef` fields: `apiVersion`, `kind`, `name`, `namespace`
-- errors use `{"status":"failure","error":{"reason":"...","message":"..."}}`
+- errors include `{"status":"failure","error":{"reason":"...","message":"..."}}` in the same document as any available result, never as a second JSON document
+- diff results include `complete`, `warnings`, and a unified `changes` array carrying action, cluster, structured provenance, before/after origins, and resource snapshots
+- legacy `added`, `deleted`, and `modified` fields remain available; use `changes` to retain cluster and provenance context for every action
+- empty change collections are `[]`, not `null`
+
+Ordinary complete diffs continue to exit 0 even when resources change. Use `fmp diff --exit-code` to exit 1 for differences. A failed policy or execution still returns nonzero without this flag. With JSON output, a failed check retains the available diff and its `complete: true` field alongside failure information.
 
 | Code | Meaning                                                 |
 | ---- | ------------------------------------------------------- |
-| 0    | Success; for `diff`, no differences                     |
-| 1    | Differences found by `diff`, or generic error           |
-| 2    | User input error                                        |
-| 3    | Dependency failure such as git, Helm, or network errors |
+| 0    | Success; may include differences unless `--exit-code` is set |
+| 1    | Differences with `--exit-code`, or an otherwise unclassified error |
+| 2    | Explicitly classified user input error                  |
+| 3    | Expansion failure or explicitly classified dependency failure |
 | 5    | Policy violation                                        |
-| 10   | Unexpected internal error                               |
+
+Not every validation or dependency error is classified separately yet. Treat any nonzero status as a failed command/check and inspect the JSON error or stderr for details.
+
+### Incomplete previews
+
+If either side fails to render, fmp suppresses the entire comparison rather than reporting missing resources as deletions or an empty diff as clean. Policy and AI assessments are skipped, and the CLI/action fails. JSON failures include `complete: false`; action reports carry error status and diagnostics even when advisory `fail-on-error` behavior is disabled.
+
+Malformed manifests, duplicate output identities, failed source acquisition, unresolved sources at the discovery fixed point, and missing discovered paths are failures. Known fmp configuration files are not treated as raw manifests. Distinct Flux rendering contexts remain separate even when they use the same directory, while equivalent bootstrap paths are deduplicated.
+
+Completeness covers the configured render scope and detected failures. It does not guarantee full Flux feature parity, live-cluster validity, or runtime behavior. Rendering may access remote sources, credentials, or external programs according to your configuration; it is not sandboxed.
 
 The hidden `describe` command emits command and flag metadata for agents and other automation:
 
