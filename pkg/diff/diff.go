@@ -28,11 +28,7 @@ func renderToRNodes(r *render.Render) []*yaml.RNode {
 // objectRefToResID converts a k8q ObjectRef to a kustomize resid.ResId.
 func objectRefToResID(ref k8qdiff.ObjectRef) resid.ResId {
 	return resid.NewResIdWithNamespace(
-		resid.Gvk{
-			Group:   gvkGroup(ref.APIVersion),
-			Version: gvkVersion(ref.APIVersion),
-			Kind:    ref.Kind,
-		},
+		resid.NewGvk(gvkGroup(ref.APIVersion), gvkVersion(ref.APIVersion), ref.Kind),
 		ref.Name,
 		ref.Namespace,
 	)

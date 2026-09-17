@@ -238,6 +238,63 @@ metadata:
 	}
 }
 
+func TestChangeSetPreservesNamespacedAndClusterScopedIdentities(t *testing.T) {
+	a := render.NewDefaultRender(logr.Discard())
+	b := makeRender(t, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: private-tunnels
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: tunnels.example.com
+spec:
+  group: example.com
+  names:
+    kind: Tunnel
+    plural: tunnels
+  scope: Cluster
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+`)
+
+	result, err := ChangeSet(a, b)
+	if err != nil {
+		t.Fatalf("ChangeSet() error = %v", err)
+	}
+	if got, want := len(result.Added), 2; got != want {
+		t.Fatalf("added count = %d, want %d", got, want)
+	}
+
+	changes := make(map[string]ResourceChange, len(result.Added))
+	for _, change := range result.Added {
+		changes[change.Kind] = change
+	}
+
+	configMap := changes["ConfigMap"]
+	if got, want := configMap.ID.String(), "ConfigMap.v1.[noGrp]/app-config.private-tunnels"; got != want {
+		t.Errorf("ConfigMap ID = %q, want %q", got, want)
+	}
+	if got, want := configMap.Namespace, "private-tunnels"; got != want {
+		t.Errorf("ConfigMap namespace = %q, want %q", got, want)
+	}
+
+	crd := changes["CustomResourceDefinition"]
+	if got, want := crd.ID.String(), "CustomResourceDefinition.v1.apiextensions.k8s.io/tunnels.example.com.[noNs]"; got != want {
+		t.Errorf("CustomResourceDefinition ID = %q, want %q", got, want)
+	}
+	if crd.Namespace != "" {
+		t.Errorf("CustomResourceDefinition namespace = %q, want empty", crd.Namespace)
+	}
+}
+
 func TestDiff_JSONOutputStructure(t *testing.T) {
 	a := makeRender(t, `apiVersion: v1
 kind: ConfigMap

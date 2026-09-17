@@ -144,6 +144,147 @@ func TestRunDiff_NoArgsComparesHeadToWorktree(t *testing.T) {
 	}
 }
 
+func TestSummaryNamespaceRegression(t *testing.T) {
+	repo := initGitRepo(t)
+	writeFile(t, repo, ".fmp.yaml", "paths:\n  - .\nsort: true\n")
+	writeFile(t, repo, "kustomization.yaml", "resources: []\n")
+	gitRun(t, repo, "add", ".")
+	gitCommit(t, repo, "initial state")
+
+	writeFile(t, repo, "kustomization.yaml", `namespace: private-tunnels
+resources:
+  - namespace.yaml
+  - resources.yaml
+`)
+	writeFile(t, repo, "namespace.yaml", `apiVersion: v1
+kind: Namespace
+metadata:
+  name: private-tunnels
+`)
+	writeFile(t, repo, "resources.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secret
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: server
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: client
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: server
+spec:
+  selector:
+    matchLabels:
+      app: server
+  template:
+    metadata:
+      labels:
+        app: server
+    spec:
+      containers:
+        - name: server
+          image: example.invalid/server:latest
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-server
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: tunnels.example.com
+spec:
+  group: example.com
+  names:
+    kind: Tunnel
+    plural: tunnels
+  scope: Cluster
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+`)
+
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	defer func() { _ = os.Chdir(origWD) }()
+	if err := os.Chdir(repo); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+
+	tests := []struct {
+		name        string
+		summaryOnly bool
+	}{
+		{name: "summary"},
+		{name: "summary-only", summaryOnly: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetGlobals()
+			diffSummary = !tt.summaryOnly
+			diffSummaryOnly = tt.summaryOnly
+
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			summaryOut, diffOut := diffOutputs(&stdout, &stderr)
+			if err := runDiff(nil, logr.Discard(), nil, summaryOut, diffOut); err != nil {
+				t.Fatalf("runDiff() error = %v", err)
+			}
+
+			summary := stderr.String()
+			if tt.summaryOnly {
+				summary = stdout.String()
+			}
+			if !strings.Contains(summary, "🟢 8 to add, 🟡 0 to change, 🔴 0 to destroy.") {
+				t.Fatalf("expected complete addition count, got:\n%s", summary)
+			}
+			if !strings.Contains(summary, "Namespace") {
+				t.Fatalf("expected Namespace in summary, got:\n%s", summary)
+			}
+
+			if tt.summaryOnly {
+				if strings.Contains(stdout.String(), "Namespace.v1.[noGrp]/private-tunnels.[noNs]") {
+					t.Fatalf("summary-only output unexpectedly contains raw diff:\n%s", stdout.String())
+				}
+				return
+			}
+			if !strings.Contains(stdout.String(), "Namespace.v1.[noGrp]/private-tunnels.[noNs]") {
+				t.Fatalf("expected Namespace identity in raw diff, got:\n%s", stdout.String())
+			}
+			if !strings.Contains(stdout.String(), "ConfigMap.v1.[noGrp]/app-config.private-tunnels") {
+				t.Fatalf("expected namespaced ConfigMap identity in raw diff, got:\n%s", stdout.String())
+			}
+			if !strings.Contains(stdout.String(), "CustomResourceDefinition.v1.apiextensions.k8s.io/tunnels.example.com.[noNs]") {
+				t.Fatalf("expected cluster-scoped CRD identity in raw diff, got:\n%s", stdout.String())
+			}
+		})
+	}
+}
+
 func TestRunDiff_NoArgsResolveGitReusesCurrentRepo(t *testing.T) {
 	resetGlobals()
 	resolveGit = true
