@@ -374,9 +374,16 @@ Use --init to generate a complete .fmp.yaml config file in the repo.`,
 
 	rootCmd.SilenceErrors = true
 	rootCmd.SilenceUsage = true
-	rootCmd.AddCommand(renderCmd, diffCmd, testCmd, getCmd, ciCmd, detectCmd, versionCmd, githubActionCmd(), describeCmd)
+	rootCmd.AddCommand(renderCmd, diffCmd, testCmd, getCmd, ciCmd, detectCmd, versionCmd, githubActionCmd(), describeCmd, agentCmd(), mcpCmd())
 
-	if err := rootCmd.Execute(); err != nil {
+	executed, err := rootCmd.ExecuteC()
+	if err != nil {
+		if executed != nil && (executed.Name() == "agent" || executed.Name() == "mcp") {
+			if !errors.Is(err, errAgentHandled) {
+				fmt.Fprintln(os.Stderr, err)
+			}
+			os.Exit(2)
+		}
 		code := exitCodeFor(err)
 		if outputFormat == "json" || requestsJSON(os.Args[1:]) {
 			writeJSONFailure(os.Stdout, jsonOutput.Bytes(), err)

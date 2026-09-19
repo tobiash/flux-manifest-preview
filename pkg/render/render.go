@@ -12,6 +12,7 @@ import (
 	"sigs.k8s.io/kustomize/api/krusty"
 	"sigs.k8s.io/kustomize/api/resmap"
 	"sigs.k8s.io/kustomize/api/resource"
+	"sigs.k8s.io/kustomize/api/types"
 	"sigs.k8s.io/kustomize/kyaml/filesys"
 	"sigs.k8s.io/kustomize/kyaml/resid"
 )
@@ -76,6 +77,7 @@ type Render struct {
 	log        logr.Logger
 	warnings   []error
 	provenance map[string]Provenance
+	localRoot  string
 }
 
 // ResourceView is the domain view of a rendered Kubernetes resource plus fmp metadata.
@@ -92,12 +94,19 @@ type ResourceView struct {
 
 // NewDefaultRender creates a Render with default kustomize options.
 func NewDefaultRender(log logr.Logger) *Render {
+	opts := krusty.MakeDefaultOptions()
+	opts.PluginConfig = types.DisabledPluginConfig()
 	return &Render{
 		ResMap:     resmap.New(),
-		kustomizer: krusty.MakeKustomizer(krusty.MakeDefaultOptions()),
+		kustomizer: krusty.MakeKustomizer(opts),
 		log:        log,
 		provenance: make(map[string]Provenance),
 	}
+}
+
+// SetLocalOnly confines subsequent builds and reads to root.
+func (r *Render) SetLocalOnly(root string) {
+	r.localRoot = root
 }
 
 // AddKustomization runs kustomize on the given path and appends the results.
@@ -107,6 +116,11 @@ func (r *Render) AddKustomization(fSys filesys.FileSystem, path string) error {
 
 // AddKustomizationWithProducer runs kustomize on the given path and records the producer.
 func (r *Render) AddKustomizationWithProducer(fSys filesys.FileSystem, path, producer string) error {
+	if r.localRoot != "" {
+		if err := ValidateLocalKustomization(fSys, r.localRoot, path); err != nil {
+			return err
+		}
+	}
 	resmap, err := r.kustomizer.Run(fSys, path)
 	if err != nil {
 		return err
@@ -124,6 +138,11 @@ func (r *Render) AddPath(fSys filesys.FileSystem, path string) error {
 
 // AddPathWithProducer loads resources from a path and records the producer.
 func (r *Render) AddPathWithProducer(fSys filesys.FileSystem, path, producer string) error {
+	if r.localRoot != "" {
+		if err := ValidateLocalPath(fSys, r.localRoot, path); err != nil {
+			return err
+		}
+	}
 	if isKustomization(fSys, path) {
 		return r.AddKustomizationWithProducer(fSys, path, producer)
 	}
@@ -147,6 +166,11 @@ func (r *Render) addRawYAMLFiles(fSys filesys.FileSystem, dir, producer string) 
 		}
 
 		fullPath := filepath.Join(dir, name)
+		if r.localRoot != "" {
+			if err := ValidateLocalPath(fSys, r.localRoot, fullPath); err != nil {
+				return err
+			}
+		}
 		data, err := fSys.ReadFile(fullPath)
 		if err != nil {
 			return fmt.Errorf("reading %s: %w", fullPath, err)

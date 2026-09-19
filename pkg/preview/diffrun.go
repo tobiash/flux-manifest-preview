@@ -15,32 +15,42 @@ import (
 
 // DiffRunOptions describes one complete rendered manifest diff run.
 type DiffRunOptions struct {
-	LeftPath      string
-	RightPath     string
-	DiffWriter    io.Writer
-	Policies      *config.PolicyConfig
-	PolicyBaseDir string
-	AI            *config.AIConfig
-	AIAssessor    ai.Assessor
+	RetainSnapshots bool
+	LeftPath        string
+	RightPath       string
+	DiffWriter      io.Writer
+	Policies        *config.PolicyConfig
+	PolicyBaseDir   string
+	AI              *config.AIConfig
+	AIAssessor      ai.Assessor
 }
 
 // DiffRunResult is the domain result used by CLI and GitHub Action adapters.
 type DiffRunResult struct {
-	Complete     bool
-	Result       *diff.DiffResult
-	Summary      diff.ResultSummary
-	DiffText     string
-	Warnings     []string
-	PolicyResult *policy.Result
-	AIAssessment *ai.Assessment
+	Before, After *Snapshot
+	Complete      bool
+	Result        *diff.DiffResult
+	Summary       diff.ResultSummary
+	DiffText      string
+	Warnings      []string
+	PolicyResult  *policy.Result
+	AIAssessment  *ai.Assessment
 }
 
 // RunDiff renders both sides, computes the rendered manifest diff, and applies policy checks.
 // Incomplete renders return an error and a result with Complete=false, diagnostics,
 // no authoritative changes, and no policy or AI assessment.
-func (p *Preview) RunDiff(ctx context.Context, opts DiffRunOptions) (*DiffRunResult, error) {
+func (p *Preview) RunDiff(ctx context.Context, opts DiffRunOptions) (run *DiffRunResult, runErr error) {
 	var diffText bytes.Buffer
-	result, err := p.DiffResult(ctx, opts.LeftPath, opts.RightPath, &diffText)
+	result, before, after, err := p.diffSnapshots(ctx, opts.LeftPath, opts.RightPath, &diffText)
+	defer func() {
+		if opts.RetainSnapshots {
+			if run == nil {
+				run = &DiffRunResult{Result: &diff.DiffResult{}}
+			}
+			run.Before, run.After = before, after
+		}
+	}()
 	if err != nil {
 		var expansionErr *ExpansionError
 		if !errors.As(err, &expansionErr) || result == nil {

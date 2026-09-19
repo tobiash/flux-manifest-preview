@@ -11,14 +11,16 @@ require (
 	github.com/fluxcd/source-controller/api v1.8.1
 	github.com/go-logr/logr v1.4.3
 	github.com/go-logr/zerologr v1.2.3
+	github.com/google/jsonschema-go v0.3.0
 	github.com/hexops/gotextdiff v1.0.3
+	github.com/modelcontextprotocol/go-sdk v1.2.0
 	github.com/open-policy-agent/opa v1.15.2
 	github.com/rs/zerolog v1.33.0
 	github.com/sethvargo/go-githubactions v1.3.2
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/tmc/langchaingo v0.1.14
-	github.com/tobiash/k8q v0.3.0
+	github.com/tobiash/k8q v0.3.1-0.20260916190906-a8e82e78d367
 	golang.org/x/sync v0.20.0
 	gopkg.in/yaml.v3 v3.0.1
 	helm.sh/helm/v4 v4.1.3
@@ -152,6 +154,7 @@ require (
 	github.com/xeipuuv/gojsonreference v0.0.0-20180127040603-bd5ef7bd5415 // indirect
 	github.com/xlab/treeprint v1.2.0 // indirect
 	github.com/yashtewari/glob-intersection v0.2.0 // indirect
+	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	go.opentelemetry.io/proto/otlp v1.9.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect

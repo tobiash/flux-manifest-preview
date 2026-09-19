@@ -68,7 +68,7 @@ type diffChange struct {
 	Cluster   string         `json:"cluster,omitempty"`
 	Kind      string         `json:"kind"`
 	Name      string         `json:"name"`
-	Namespace string         `json:"namespace,omitempty"`
+	Namespace string         `json:"namespace"`
 	Producer  string         `json:"producer,omitempty"`
 	Old       map[string]any `json:"old,omitempty"`
 	New       map[string]any `json:"new,omitempty"`

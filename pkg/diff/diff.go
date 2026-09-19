@@ -14,8 +14,8 @@ import (
 )
 
 // renderToRNodes converts a render.Render to a slice of *yaml.RNode for
-// consumption by the k8q diff engine. Nodes are deep-copied because the
-// diff engine applies a ReorderFilter in-place.
+// consumption by the k8q diff engine. Copies keep render ownership isolated
+// from downstream analysis.
 func renderToRNodes(r *render.Render) []*yaml.RNode {
 	resources := r.Resources()
 	nodes := make([]*yaml.RNode, len(resources))
@@ -28,11 +28,7 @@ func renderToRNodes(r *render.Render) []*yaml.RNode {
 // objectRefToResID converts a k8q ObjectRef to a kustomize resid.ResId.
 func objectRefToResID(ref k8qdiff.ObjectRef) resid.ResId {
 	return resid.NewResIdWithNamespace(
-		resid.Gvk{
-			Group:   gvkGroup(ref.APIVersion),
-			Version: gvkVersion(ref.APIVersion),
-			Kind:    ref.Kind,
-		},
+		resid.NewGvk(gvkGroup(ref.APIVersion), gvkVersion(ref.APIVersion), ref.Kind),
 		ref.Name,
 		ref.Namespace,
 	)

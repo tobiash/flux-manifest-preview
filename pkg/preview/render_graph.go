@@ -27,7 +27,10 @@ func (g fluxRenderGraph) Load(ctx context.Context) (*loadRepoResult, error) {
 		Expanders: g.loader.preview.expandersForSource(g.loader.root),
 		PathKey:   g.pathKey,
 		RenderPath: func(path expander.DiscoveredPath) error {
-			return g.renderPathWithBuildFilter(path, func(build expander.DiscoveredPath) bool {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			return g.renderPathWithBuildFilter(ctx, path, func(build expander.DiscoveredPath) bool {
 				identity := g.pathKey(build)
 				if visited[identity] {
 					return false
@@ -56,6 +59,9 @@ func (g fluxRenderGraph) Load(ctx context.Context) (*loadRepoResult, error) {
 	if err := g.applyFilters(); err != nil {
 		return nil, err
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := g.decryptSOPS(); err != nil {
 		return nil, err
 	}
@@ -77,15 +83,23 @@ func (g fluxRenderGraph) initialPaths() []expander.DiscoveredPath {
 }
 
 func (g fluxRenderGraph) renderPath(path expander.DiscoveredPath) error {
-	return g.renderPathWithBuildFilter(path, nil)
+	return g.renderPathWithBuildFilter(context.Background(), path, nil)
 }
 
-func (g fluxRenderGraph) renderPathWithBuildFilter(path expander.DiscoveredPath, shouldBuild func(expander.DiscoveredPath) bool) error {
+func (g fluxRenderGraph) renderPathWithBuildFilter(ctx context.Context, path expander.DiscoveredPath, shouldBuild func(expander.DiscoveredPath) bool) error {
 	baseDir := path.BaseDir
 	if baseDir == "" {
 		baseDir = g.loader.root
 	}
 	full := filepath.Join(baseDir, path.Path)
+	if g.loader.preview != nil && g.loader.preview.localOnly {
+		if err := render.ValidateLocalPath(g.loader.fs, g.loader.root, baseDir); err != nil {
+			return err
+		}
+		if err := render.ValidateLocalPath(g.loader.fs, baseDir, full); err != nil {
+			return err
+		}
+	}
 	if !g.loader.fs.Exists(full) {
 		if g.userPath(path.Path) {
 			return fmt.Errorf("path %q does not exist", path.Path)
@@ -96,11 +110,17 @@ func (g fluxRenderGraph) renderPathWithBuildFilter(path expander.DiscoveredPath,
 	g.loader.log.V(1).Info("rendering path", "path", path.Path, "baseDir", path.BaseDir)
 	// Transform each build before merging; raw identities can overlap across contexts.
 	built := render.NewDefaultRender(g.loader.log)
+	if g.loader.preview.localOnly {
+		built.SetLocalOnly(baseDir)
+	}
 	producer := path.Producer
 	if producer == "" {
 		producer = fmt.Sprintf("path %s", path.Path)
 	}
 	visit := func(dir string) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		build := path
 		build.BaseDir = dir
 		build.Path = "."
