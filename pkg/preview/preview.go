@@ -37,6 +37,8 @@ type Preview struct {
 	gitRepoExpander *gitrepoexpander.Expander
 	helmSettings    *helmcli.EnvSettings
 	log             logr.Logger
+	localOnly       bool
+	strictInputs    bool
 }
 
 func (p *Preview) isClustered() bool {
@@ -261,68 +263,8 @@ func (p *Preview) Diff(ctx context.Context, a, b string, out io.Writer) error {
 // An ExpansionError with only Warnings accompanies a complete comparison;
 // expansion errors suppress all changes because either side may be incomplete.
 func (p *Preview) DiffResult(ctx context.Context, a, b string, out io.Writer) (result *diff.DiffResult, resultErr error) {
-	// Load sequentially because configured KIO filters may carry mutable state.
-	ar, err := p.freshLoadRepo(ctx, a)
-	if err != nil {
-		return nil, fmt.Errorf("render error: %w", err)
-	}
-	br, err := p.freshLoadRepo(ctx, b)
-	if err != nil {
-		return nil, fmt.Errorf("render error: %w", err)
-	}
-	diagnostics := &ExpansionError{}
-	for _, results := range []map[string]*loadRepoResult{ar, br} {
-		for _, cluster := range sortedClusterNames(results) {
-			diagnostics.Errors = append(diagnostics.Errors, results[cluster].errors...)
-			diagnostics.Warnings = append(diagnostics.Warnings, results[cluster].warnings...)
-		}
-	}
-	if len(diagnostics.Errors) > 0 {
-		return &diff.DiffResult{}, diagnostics
-	}
-	defer func() {
-		if resultErr == nil && len(diagnostics.Warnings) > 0 {
-			resultErr = diagnostics
-		}
-	}()
-
-	if p.helmReleaseName != "" {
-		for _, r := range ar {
-			r.render.FilterByLabel("helm.toolkit.fluxcd.io/name", p.helmReleaseName)
-		}
-		for _, r := range br {
-			r.render.FilterByLabel("helm.toolkit.fluxcd.io/name", p.helmReleaseName)
-		}
-	}
-
-	for _, r := range ar {
-		p.applyOutputOptions(r.render)
-	}
-	for _, r := range br {
-		p.applyOutputOptions(r.render)
-	}
-
-	if p.isClustered() {
-		leftRenders := make(map[string]*render.Render)
-		for c, r := range ar {
-			leftRenders[c] = r.render
-		}
-		rightRenders := make(map[string]*render.Render)
-		for c, r := range br {
-			rightRenders[c] = r.render
-		}
-		result, err := diff.DiffWithResultClustered(leftRenders, rightRenders, out)
-		if err != nil {
-			return nil, fmt.Errorf("diff error: %w", err)
-		}
-		return result, nil
-	}
-
-	result, err = diff.DiffWithResult(ar[""].render, br[""].render, out)
-	if err != nil {
-		return nil, fmt.Errorf("diff error: %w", err)
-	}
-	return result, nil
+	result, _, _, resultErr = p.diffSnapshots(ctx, a, b, out)
+	return result, resultErr
 }
 
 // Opt is a functional option for configuring Preview.
@@ -333,10 +275,41 @@ func New(opts ...Opt) (*Preview, error) {
 	var p Preview
 	for _, opt := range opts {
 		if err := opt(&p); err != nil {
-			return nil, err
+			return nil, errors.Join(err, p.Close())
 		}
 	}
+	if p.localOnly && p.sopsDecrypt {
+		return nil, errors.Join(fmt.Errorf("local-only mode does not support SOPS key acquisition"), p.Close())
+	}
 	return &p, nil
+}
+
+// Close releases cloned repositories. Repeated calls are safe after rendering stops.
+func (p *Preview) Close() error {
+	if p.gitRepoExpander != nil {
+		return p.gitRepoExpander.Close()
+	}
+	return nil
+}
+
+// WithLocalOnly rejects remote acquisition and filesystem references outside the
+// current source root and implies WithStrictInputs. This is not an OS sandbox;
+// external plugins are disabled.
+func WithLocalOnly() Opt {
+	return func(p *Preview) error {
+		p.localOnly = true
+		p.strictInputs = true
+		return nil
+	}
+}
+
+// WithStrictInputs rejects known unsupported Flux rendering inputs rather than
+// silently omitting them. It does not restrict source acquisition or local paths.
+func WithStrictInputs() Opt {
+	return func(p *Preview) error {
+		p.strictInputs = true
+		return nil
+	}
 }
 
 // WithLogger sets the logger for the Preview.
@@ -406,31 +379,52 @@ func WithGitRepo() Opt {
 		if err != nil {
 			return fmt.Errorf("creating git repo expander: %w", err)
 		}
+		if p.gitRepoExpander != nil {
+			if err := p.gitRepoExpander.Close(); err != nil {
+				return errors.Join(err, exp.Close())
+			}
+		}
 		p.gitRepoExpander = exp
 		return nil
 	}
 }
 
 func (p *Preview) expandersForSource(path string) *expander.Registry {
-	if !p.fluxKSEnabled && p.gitRepoExpander == nil && p.helmSettings == nil {
+	if !p.localOnly && !p.fluxKSEnabled && p.gitRepoExpander == nil && p.helmSettings == nil {
 		return nil
 	}
 	registry := expander.NewRegistry(p.log)
 	var resolver *gitrepoexpander.Expander
-	if p.gitRepoExpander != nil {
+	if p.localOnly {
+		resolver = gitrepoexpander.NewLocalExpander(path, p.log)
+	} else if p.gitRepoExpander != nil {
 		resolver = p.gitRepoExpander.WithSourceRoot(path)
+	}
+	if resolver != nil {
 		registry.Register(resolver)
 	}
 	if p.fluxKSEnabled {
+		var ks *fluxksexpander.Expander
 		if resolver != nil {
-			registry.Register(fluxksexpander.NewExpanderWithResolver(p.log, resolver))
+			ks = fluxksexpander.NewExpanderWithResolver(p.log, resolver)
 		} else {
-			registry.Register(fluxksexpander.NewExpander(p.log))
+			ks = fluxksexpander.NewExpander(p.log)
 		}
+		if p.strictInputs {
+			ks.SetStrictInputs()
+		}
+		registry.Register(ks)
 	}
 	if p.helmSettings != nil {
 		runner := helmexpander.NewRunner(p.helmSettings, p.log)
-		registry.Register(helmexpander.NewExpander(runner, resolver, p.log))
+		if p.localOnly {
+			runner.SetLocalOnly(path)
+		}
+		helm := helmexpander.NewExpander(runner, resolver, p.log)
+		if p.strictInputs {
+			helm.SetStrictInputs()
+		}
+		registry.Register(helm)
 	}
 	return registry
 }

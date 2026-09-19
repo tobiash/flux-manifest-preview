@@ -28,6 +28,9 @@ type repoLoader struct {
 }
 
 func (p *Preview) loadRepo(ctx context.Context, path string) (map[string]*loadRepoResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if p.isClustered() {
 		results := make(map[string]*loadRepoResult, len(p.clusterPaths))
 		for cluster, paths := range p.clusterPaths {
@@ -48,6 +51,9 @@ func (p *Preview) loadRepo(ctx context.Context, path string) (map[string]*loadRe
 }
 
 func (p *Preview) loadRepoPaths(ctx context.Context, path string, paths []string, cluster string) (*loadRepoResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(paths) == 0 {
 		return nil, fmt.Errorf("no render roots configured: specify --path or configure paths in .fmp.yaml")
 	}

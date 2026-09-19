@@ -389,6 +389,33 @@ The action's `export-dir` and `export-changed-only` inputs are reserved; manifes
 
 ## Structured output and exit codes
 
+### Agent CLI and MCP
+
+The versioned agent interface adds local stdio MCP tools and a JSON CLI over the
+same operation service:
+
+```sh
+fmp agent schema
+fmp agent discover --root /absolute/path/to/gitops
+fmp agent --root /absolute/path/to/gitops < request.json
+fmp mcp --root /absolute/path/to/gitops
+```
+
+It supports discovery, rendering, preview, bounded queries, redacted inspection,
+snapshot comparison, deterministic checks, and explicit handle release. MCP
+retains results between calls; CLI batches reuse results within one invocation.
+Existing CLI output formats are unchanged.
+
+Local-only rendering is the default. Trusted access is a startup option, never a
+tool argument. Both agent profiles reject known unsupported rendering inputs;
+there are no apply, publish, decryption, or nested-AI tools. Artifact limits and
+cooperative timeouts are not an OS sandbox or a process memory quota.
+
+See the [agent workflow and contract](docs/agent-workflow.md) and the portable
+[OpenCode/Claude Code skill](https://github.com/tobiash/gitops-preview-skill).
+
+### Legacy command output
+
 `render`, `diff`, `test`, and `get ks/hr` support `--output json`:
 
 ```bash
